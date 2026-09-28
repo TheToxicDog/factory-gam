@@ -176,6 +176,8 @@
     ammo_basic: (c, s) => magazine(c, s, '#c8a040', '#d8b060'),
     ammo_pierce: (c, s) => magazine(c, s, '#a83a2a', '#e0e0e0'),
     grenade: (c, s) => { circle(c, s * 0.5, s * 0.56, s * 0.26, '#4a5a3a', '#1e2418', s * 0.03); c.fillStyle = '#8a939c'; c.fillRect(s * 0.44, s * 0.2, s * 0.12, s * 0.14); },
+    locomotive: (c, s) => { c.save(); c.translate(s / 2, s / 2); c.rotate(-0.5); S.paintCar(c, 'loco', s * 0.9, s * 0.34, null); c.restore(); },
+    cargo_wagon: (c, s) => { c.save(); c.translate(s / 2, s / 2); c.rotate(-0.5); S.paintCar(c, 'wagon', s * 0.9, s * 0.34, null); c.restore(); },
     repair_pack: (c, s) => {
       c.fillStyle = '#c8b050'; rr(c, s * 0.16, s * 0.28, s * 0.68, s * 0.5, s * 0.06); c.fill(); c.strokeStyle = '#4a3a10'; c.lineWidth = s * 0.03; c.stroke();
       c.fillStyle = '#d83a3a'; c.fillRect(s * 0.44, s * 0.36, s * 0.12, s * 0.34); c.fillRect(s * 0.33, s * 0.47, s * 0.34, s * 0.12);

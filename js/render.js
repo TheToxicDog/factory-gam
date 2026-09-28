@@ -235,7 +235,7 @@
           const e = g.ents.get(id);
           if (!e || e.x > wx1 + 1 || e.y > wy1 + 1 || e.x + e.w < wx0 - 1 || e.y + e.h < wy0 - 1) continue;
           const k = D.protos[e.p].kind;
-          if (k === 'belt' || k === 'underground' || k === 'splitter' || k === 'pipe' || k === 'pipe_ug') ground.push(e);
+          if (k === 'belt' || k === 'underground' || k === 'splitter' || k === 'pipe' || k === 'pipe_ug' || k === 'rail') ground.push(e);
           else objects.push(e);
           if (k === 'inserter') arms.push(e);
         }
@@ -244,6 +244,7 @@
       objects.sort((a, b) => a.y + a.h - (b.y + b.h));
       for (const e of objects) this.drawEntity(g, e, view);
       for (const e of arms) this.drawArm(g, e);
+      this.drawTrains(g, wx0, wy0, wx1, wy1, view);
       this.drawGhosts(g, wx0, wy0, wx1, wy1);
       this.drawEnemies(g, wx0, wy0, wx1, wy1);
       this.drawPlayer(g);
@@ -260,8 +261,24 @@
       const tick = g.tick;
       const hoods = [];
       const nodes = [];
+      // Track goes underneath everything else on the ground.
       for (const e of list) {
         const pr = D.protos[e.p];
+        if (pr.kind !== 'rail') continue;
+        this.blit(S.rail(e.mask), e.x, e.y);
+        if (pr.role !== 'rail') {
+          const [sx, sy] = this.toScreen(e.x, e.y);
+          let lamp = '#f0a830';
+          if (pr.role !== 'stop') {
+            const st = FG.trains.blockState(g, e.x, e.y);
+            lamp = st === 'free' ? '#7ac05a' : st === 'reserved' ? '#e8c547' : '#e0553f';
+          }
+          S.paintRailMark(ctx, pr.role, T, sx, sy, lamp);
+        }
+      }
+      for (const e of list) {
+        const pr = D.protos[e.p];
+        if (pr.kind === 'rail') continue;
         if (pr.kind === 'pipe' || pr.kind === 'pipe_ug') { this.drawPipe(g, e); continue; }
         const frame = Math.floor(tick * (pr.speed / FG.TICKS) * 32) & 7;
         if (pr.kind === 'belt') {
@@ -520,12 +537,12 @@
       const ctx = this.ctx;
       for (const gh of g.ghosts.values()) {
         if (gh.x > wx1 || gh.y > wy1 || gh.x + gh.w < wx0 || gh.y + gh.h < wy0) continue;
-        this.drawProtoPreview(gh.p, gh.x, gh.y, gh.dir, 0.4, '#58a6d8');
+        this.drawProtoPreview(gh.p, gh.x, gh.y, gh.dir, 0.4, '#58a6d8', gh.settings && gh.settings.mask);
       }
       ctx.globalAlpha = 1;
     }
 
-    drawProtoPreview(p, x, y, dir, alpha, tint) {
+    drawProtoPreview(p, x, y, dir, alpha, tint, mask) {
       const ctx = this.ctx, T = this.T;
       const pr = D.protos[p];
       const [fw, fh] = FG.footprint(pr, dir);
@@ -537,6 +554,9 @@
         this.blit(S.belt(pr.tier, 0, dir, 0), x + ax, y + ay, alpha);
         this.blit(S.belt(pr.tier, 0, dir, 0), x + bx, y + by, alpha);
         this.blit(S.splitter(pr.tier, dir), x, y, alpha);
+      } else if (pr.kind === 'rail') {
+        this.blit(S.rail(mask || 0), x, y, alpha);
+        if (pr.role !== 'rail') { ctx.globalAlpha = alpha; S.paintRailMark(ctx, pr.role, T, sx, sy); ctx.globalAlpha = 1; }
       } else if (pr.kind === 'pipe') {
         ctx.fillStyle = '#8a959f'; ctx.fillRect(sx + T * 0.3, sy + T * 0.3, T * 0.4, T * 0.4);
       } else this.blit(S.entity(p, dir), x, y, alpha);
@@ -553,6 +573,33 @@
       if (tint) {
         ctx.fillStyle = S.rgba(tint, 0.18);
         ctx.fillRect(sx, sy, fw * T, fh * T);
+      }
+    }
+
+    // ------------------------------------------------------------- trains
+    drawTrains(g, wx0, wy0, wx1, wy1, view) {
+      const ctx = this.ctx, T = this.T;
+      for (const tr of g.rail.trains) {
+        for (let i = 0; i < tr.cars.length; i++) {
+          const c = tr.cars[i];
+          const p = FG.trains.carPose(tr, i);
+          if (p.x < wx0 - 3 || p.y < wy0 - 3 || p.x > wx1 + 3 || p.y > wy1 + 3) continue;
+          const [sx, sy] = this.toScreen(p.x, p.y);
+          let icon = null;
+          if (c.type === 'wagon') { const s = c.inv.slots.find((x) => x); if (s) icon = FG.icons.get(s.id); }
+          ctx.save();
+          ctx.translate(sx, sy);
+          ctx.rotate(p.angle + (c.flip ? Math.PI : 0));
+          S.paintCar(ctx, c.type, T * FG.trains.CAR_LEN, T * 0.8, icon);
+          ctx.restore();
+          // coupler to the next car
+          if (i < tr.cars.length - 1) {
+            const q = FG.trains.carPose(tr, i + 1);
+            const [ax, ay] = this.toScreen(p.bx, p.by), [bx, by] = this.toScreen(q.fx, q.fy);
+            ctx.strokeStyle = '#1e2124'; ctx.lineWidth = Math.max(2, T * 0.12);
+            ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
+          }
+        }
       }
     }
 
@@ -721,6 +768,12 @@
         dc.beginPath(); dc.arc(x, y, r * T, 0, Math.PI * 2); dc.fill();
       };
       if (!g.player.dead) hole(g.player.x, g.player.y, 9, 0.9);
+      for (const tr of g.rail.trains) tr.cars.forEach((c, i) => {
+        if (c.type !== 'loco') return;
+        const p = FG.trains.carPose(tr, i);
+        const sgn = c.flip ? -1 : 1;
+        hole(p.x + Math.cos(p.angle) * sgn * 3.5, p.y + Math.sin(p.angle) * sgn * 3.5, 4.5, 0.85);
+      });
       for (const e of objects) {
         const k = D.protos[e.p].kind;
         if (e.status !== 'working') continue;
@@ -779,9 +832,33 @@
           ctx.drawImage(FG.icons.get(id), sx - s / 2, sy - s / 2, s, s);
         }
       }
+      // train stop names
+      if (T >= 16) {
+        ctx.font = '600 ' + Math.round(FG.clamp(T * 0.36, 11, 16)) + 'px "Barlow Semi Condensed", sans-serif';
+        ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+        for (const e of list) {
+          if (D.protos[e.p].role !== 'stop') continue;
+          const [sx, sy] = this.toScreen(e.x + 0.5, e.y);
+          const w = ctx.measureText(e.name).width + 10;
+          ctx.fillStyle = 'rgba(20,18,16,0.8)';
+          ctx.fillRect(sx - w / 2, sy - T * 0.15 - 18, w, 18);
+          ctx.fillStyle = '#f0a830';
+          ctx.fillText(e.name, sx, sy - T * 0.15 - 3);
+        }
+      }
       // hover selection
       const h = view.hover;
-      if (h && h.ent) {
+      if (h && h.car) {
+        const i = h.car.index, tr = h.car.train;
+        for (let k = 0; k < tr.cars.length; k++) {
+          const p = FG.trains.carPose(tr, k);
+          const [ax, ay] = this.toScreen(p.x, p.y);
+          ctx.save(); ctx.translate(ax, ay); ctx.rotate(p.angle);
+          ctx.strokeStyle = k === i ? '#f0a830' : 'rgba(240,168,48,0.35)'; ctx.lineWidth = 2;
+          ctx.strokeRect(-T * 1.25, -T * 0.45, T * 2.5, T * 0.9);
+          ctx.restore();
+        }
+      } else if (h && h.ent) {
         const e = h.ent;
         const [sx, sy] = this.toScreen(e.x, e.y);
         this.brackets(sx, sy, e.w * T, e.h * T, '#f0a830');
@@ -800,11 +877,23 @@
         const [sx, sy] = this.toScreen(h.enemy.x - 0.5, h.enemy.y - 0.5);
         this.brackets(sx, sy, T, T, '#e0553f');
       }
+      // rail car placement preview
+      if (view.carPreview) {
+        const cp = view.carPreview;
+        ctx.globalAlpha = 0.6;
+        const [ax, ay] = this.toScreen(cp.x, cp.y);
+        ctx.save(); ctx.translate(ax, ay); ctx.rotate(cp.angle);
+        S.paintCar(ctx, cp.type, T * FG.trains.CAR_LEN, T * 0.8, null);
+        ctx.fillStyle = cp.ok ? 'rgba(122,192,90,0.3)' : 'rgba(224,85,63,0.35)';
+        ctx.fillRect(-T * 1.2, -T * 0.4, T * 2.4, T * 0.8);
+        ctx.restore();
+        ctx.globalAlpha = 1;
+      }
       // build preview
       const b = view.build;
       if (b) {
         for (const pv of b.previews) {
-          this.drawProtoPreview(pv.p, pv.x, pv.y, pv.dir, 0.6, pv.ok ? '#7ac05a' : '#e0553f');
+          this.drawProtoPreview(pv.p, pv.x, pv.y, pv.dir, 0.6, pv.ok ? '#7ac05a' : '#e0553f', pv.mask);
         }
         const pr = D.protos[b.p];
         const first = b.previews[0];
@@ -972,7 +1061,7 @@
       const [sx, sy] = toM(e.x, e.y);
       if (sx > cw || sy > ch || sx < -10 || sy < -10) continue;
       const k = D.protos[e.p].kind;
-      ctx.fillStyle = k === 'belt' || k === 'underground' || k === 'splitter' ? '#c8a040' : k === 'pole' ? '#7a8a9a' : k === 'pipe' || k === 'pipe_ug' ? '#6a8aa8' : k === 'turret' || k === 'laser' || k === 'wall' ? '#b0b0b0' : '#9ab0c8';
+      ctx.fillStyle = k === 'rail' ? '#8a8078' : k === 'belt' || k === 'underground' || k === 'splitter' ? '#c8a040' : k === 'pole' ? '#7a8a9a' : k === 'pipe' || k === 'pipe_ug' ? '#6a8aa8' : k === 'turret' || k === 'laser' || k === 'wall' ? '#b0b0b0' : '#9ab0c8';
       ctx.fillRect(sx, sy, Math.max(1, e.w * scale), Math.max(1, e.h * scale));
     }
     // Enemies (only in charted chunks)
@@ -986,6 +1075,13 @@
       if (!w.charted[w.chunkIndexAt(u.x, u.y)]) continue;
       const [sx, sy] = toM(u.x, u.y);
       ctx.fillRect(sx - 1, sy - 1, 2, 2);
+    }
+    // Trains
+    ctx.fillStyle = '#ff8a3a';
+    for (const tr of g.rail.trains) for (let i = 0; i < tr.cars.length; i++) {
+      const p = FG.trains.carPose(tr, i);
+      const [sx, sy] = toM(p.x, p.y);
+      ctx.fillRect(sx - Math.max(1.5, scale), sy - Math.max(1.5, scale), Math.max(3, scale * 2), Math.max(3, scale * 2));
     }
     // Player
     const [px, py] = toM(g.player.x, g.player.y);

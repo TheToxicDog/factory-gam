@@ -51,7 +51,7 @@
       research: g.research,
       player: {
         x: g.player.x, y: g.player.y, hp: g.player.hp, inv: g.player.inv.slots, queue: g.player.queue,
-        craftProg: g.player.craftProg, rounds: g.player.rounds, ammoDmg: g.player.ammoDmg, hotbar: g.hotbar || null,
+        craftProg: g.player.craftProg, rounds: g.player.rounds, ammoDmg: g.player.ammoDmg, hotbar: g.hotbar || null, vehicle: g.player.vehicle || null,
       },
       stats: { total: g.stats.total, sec: g.stats.sec, ten: g.stats.ten, min: g.stats.min, kills: g.stats.kills, pollution: g.stats.pollution, nestsKilled: g.stats.nestsKilled || 0 },
       enemies: {
@@ -59,6 +59,7 @@
         nests: en.nests.map((n) => [n.x, n.y, Math.round(n.hp), Math.round(n.budget * 10) / 10]),
         units: en.units.map((u) => [u.type, Math.round(u.x * 10) / 10, Math.round(u.y * 10) / 10, Math.round(u.hp), u.target || 0]),
       },
+      trains: FG.trains.serialize(g),
       objectives: g.objectives.idx,
       launches: g.launches, won: g.won, wonAt: g.wonAt || 0,
       lostBuildings: g.lostBuildings || 0,
@@ -140,6 +141,8 @@
       const u = en.spawnUnit(type, x, y, null, target || null);
       u.hp = hp;
     }
+    FG.trains.deserialize(g, data.trains);
+    g.player.vehicle = data.player.vehicle || null;
     g.objectives.idx = data.objectives || 0;
     g.launches = data.launches || 0;
     g.won = !!data.won;

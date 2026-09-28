@@ -88,6 +88,7 @@
         richness: opts.richness || 1,
       };
       this.world = new FG.World(this.opts.seed, this.opts.size, { richness: this.opts.richness });
+      FG.trains.init(this);
       this.ents = new Map();
       this.nextId = 1;
       this.byKind = {};
@@ -126,6 +127,7 @@
       if (kind === 'fluid') { this.dirty.fluid = true; return; }
       if (kind === 'fx') { this.dirty.fx = true; return; }
       if (kind === 'belt' || kind === 'underground' || kind === 'splitter') { this.dirty.belts = true; return; }
+      if (kind === 'rail') { this.rail.dirty = true; return; }
       if (DIRTY_POWER[kind]) this.dirty.power = true;
       if (DIRTY_FLUID[kind]) this.dirty.fluid = true;
       if (DIRTY_FX[kind]) this.dirty.fx = true;
@@ -351,6 +353,18 @@
         return;
       }
       const inp = this.input;
+      if (p.vehicle) {
+        const tr = FG.trains.trainById(this, p.vehicle);
+        if (tr) {
+          const li = Math.max(0, tr.cars.findIndex((c) => c.type === 'loco'));
+          const pose = FG.trains.carPose(tr, li);
+          p.x = pose.x; p.y = pose.y;
+          if (tr.mode === 'manual') tr.ctrl = { throttle: -inp.my, steer: inp.mx };
+          if (this.tick % 30 === 0) this.world.chart((p.x / FG.CHUNK) | 0, (p.y / FG.CHUNK) | 0, 2);
+          return;
+        }
+        p.vehicle = null;
+      }
       let mx = inp.mx, my = inp.my;
       const len = Math.hypot(mx, my);
       const speed = 0.15;
@@ -374,6 +388,7 @@
     }
     // Mining time in ticks for the current target.
     mineTime(t) {
+      if (t.kind === 'car') return 30;
       if (t.kind === 'ent') {
         const pr = D.protos[this.ents.get(t.id).p];
         return pr.w * pr.h > 4 ? 30 : 15;
@@ -389,10 +404,12 @@
       if (!t) { p.mining = null; return; }
       if (!p.mining || p.mining.key !== t.key) p.mining = { key: t.key, prog: 0 };
       if (t.kind === 'ent' && !this.ents.get(t.id)) { p.mining = null; return; }
+      if (t.kind === 'car' && !FG.trains.findCar(this, t.id)) { p.mining = null; return; }
       p.mining.prog += 1 / this.mineTime(t);
       if (p.mining.prog < 1) return;
       p.mining.prog = 0;
-      if (t.kind === 'ent') this.pickUpEntity(this.ents.get(t.id));
+      if (t.kind === 'car') this.pickUpCar(FG.trains.findCar(this, t.id));
+      else if (t.kind === 'ent') this.pickUpEntity(this.ents.get(t.id));
       else this.mineTile(t.x, t.y);
     }
     mineTile(x, y) {
@@ -416,11 +433,26 @@
     }
     pickUpEntity(e) {
       if (!e) return false;
+      if (D.protos[e.p].kind === 'rail' && FG.trains.tileBusy(this, e.x, e.y)) { this.msg('A train is using this track', 'warn'); return false; }
       const items = FG.entityContents(this, e, true);
       if (!this.player.inv.canFit(items)) { this.msg('Not enough inventory space to pick that up', 'warn'); return false; }
       FG.removeEntity(this, e);
       for (const [id, n] of items) this.player.inv.add(id, n);
       if (items.length) FG.emit('picked', items[0][0], items[0][1], e.x + e.w / 2, e.y + e.h / 2);
+      FG.emit('sound', 'pickup');
+      FG.emit('inventory');
+      return true;
+    }
+    // Pick up a rail car (and its contents) into the inventory.
+    pickUpCar(hit) {
+      const { train, car, index } = hit;
+      const items = [[FG.trains.itemFor(car), 1]];
+      for (const s of car.inv.slots) if (s) items.push([s.id, s.n]);
+      if (!this.player.inv.canFit(items)) { this.msg('Not enough inventory space to pick that up', 'warn'); return false; }
+      const pose = FG.trains.carPose(train, index);
+      FG.trains.removeCar(this, train, index);
+      for (const [id, n] of items) this.player.inv.add(id, n);
+      FG.emit('picked', items[0][0], 1, pose.x, pose.y);
       FG.emit('sound', 'pickup');
       FG.emit('inventory');
       return true;
@@ -459,6 +491,10 @@
       }
       if (s.filter !== undefined && (pr.filter || pr.kind === 'splitter')) ent.filter = s.filter;
       if (s.prio !== undefined && pr.kind === 'splitter') ent.prio = s.prio;
+      if (pr.kind === 'rail') {
+        if (s.mask !== undefined) { ent.mask = s.mask; this.rail.dirty = true; }
+        if (s.name && pr.role === 'stop') ent.name = s.name;
+      }
     }
 
     // -------------------------------------------------------------- ghosts
@@ -535,6 +571,7 @@
       if (this.dirty.fx) { FG.machines.recomputeEffects(this); this.dirty.fx = false; }
       FG.machines.update(this);
       FG.belts.update(this);
+      FG.trains.update(this);
       this.enemies.update();
       FG.power.update(this);
       this.updatePlayer();

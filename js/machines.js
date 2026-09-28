@@ -56,7 +56,10 @@
         if (!FG.belts.dropOn(node, b.id, e.dir)) break;
       } else {
         const t = FG.entAt(g, e.ox, e.oy);
-        if (!t || t === e || FG.insertItem(g, t, b.id, 1, 'direct') < 1) break;
+        if (t && D.protos[t.p].kind === 'rail') {
+          const car = FG.trains.carAtTile(g, e.ox, e.oy);
+          if (!car || FG.trains.carInsert(car, b.id, 1) < 1) break;
+        } else if (!t || t === e || FG.insertItem(g, t, b.id, 1, 'direct') < 1) break;
       }
       b.n--;
     }
@@ -275,11 +278,17 @@
     const node = FG.belts.nodeAt(g, x, y);
     if (node) return { node };
     const ent = FG.entAt(g, x, y);
+    if (ent && D.protos[ent.p].kind === 'rail') {
+      // Arms reach into rail cars stopped on the track.
+      const car = FG.trains.carAtTile(g, x, y);
+      return car ? { car } : null;
+    }
     return ent ? { ent } : null;
   }
 
   function wantFor(g, dst, filter) {
     if (dst.node) return (id) => (filter && id !== filter ? 0 : 1);
+    if (dst.car) return (id) => (filter && id !== filter ? 0 : FG.trains.carAccept(dst.car, id, 'inserter'));
     const pr = D.protos[dst.ent.p];
     if (pr.kind === 'pole' || pr.kind === 'wall' || FG.isBeltKind(pr.kind)) return () => 0;
     return (id) => (filter && id !== filter ? 0 : FG.acceptCount(g, dst.ent, id, 'inserter'));
@@ -287,6 +296,15 @@
 
   function takeFrom(g, src, want, max) {
     if (src.node) return FG.belts.pickFrom(src.node, want, max);
+    if (src.car) {
+      for (const [id, n] of FG.trains.carOutputs(src.car)) {
+        const w = want(id);
+        if (w <= 0) continue;
+        const k = FG.trains.carTake(src.car, id, Math.min(n, max, w));
+        if (k > 0) return { id, n: k };
+      }
+      return null;
+    }
     const e = src.ent;
     for (const [id, n] of FG.outputsOf(g, e)) {
       const w = want(id);
@@ -344,7 +362,7 @@
       if (dst.node) {
         while (e.hand.n > 0 && FG.belts.dropOn(dst.node, e.hand.id, e.dir)) e.hand.n--;
       } else {
-        const k = FG.insertItem(g, dst.ent, e.hand.id, e.hand.n, 'inserter');
+        const k = dst.car ? FG.trains.carInsert(dst.car, e.hand.id, e.hand.n) : FG.insertItem(g, dst.ent, e.hand.id, e.hand.n, 'inserter');
         e.hand.n -= k;
       }
       if (e.hand.n <= 0) { e.hand = null; e.st = 3; e.status = 'working'; }

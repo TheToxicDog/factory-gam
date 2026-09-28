@@ -77,6 +77,11 @@
         case 'KeyQ': this.pipette(); break;
         case 'KeyR': this.rotate(e.shiftKey); break;
         case 'KeyX': this.mode = 'decon'; ui.toast('Drag over buildings to pick them up', 'info'); break;
+        case 'Enter': case 'NumpadEnter':
+          e.preventDefault();
+          if (!FG.trains.board(this.g)) this.warn('Stand next to a train to get in');
+          else ui.toast(this.g.player.vehicle ? 'Aboard · W go · S brake (hold to reverse) · A/D choose turns · Enter to leave' : 'You left the train');
+          break;
         case 'KeyG': {
           const [wx, wy] = [this.mouse.wx, this.mouse.wy];
           if (!this.g.enemies.throwGrenade(wx, wy)) this.warn(this.g.player.inv.count('grenade') ? 'Not ready yet' : 'You have no grenades');
@@ -95,6 +100,12 @@
       const app = this.app;
       if (app.cursor) { app.cursor = null; return; }
       const hv = app.view.hover;
+      if (hv && hv.car) {
+        const item = FG.trains.itemFor(hv.car.car);
+        if (this.g.player.inv.count(item) > 0) app.cursor = { item };
+        else this.warn('You have no ' + D.items[item].name);
+        return;
+      }
       const ent = hv && (hv.ent || hv.ghost);
       if (!ent) return;
       const item = D.protos[ent.p].item;
@@ -110,6 +121,11 @@
       if (c && c.bp) { app.cursor = { bp: rotateBlueprint(c.bp, reverse) }; app.blueprint = app.cursor.bp; return; }
       if (c && c.item && D.items[c.item].place) { app.dir = (app.dir + (reverse ? 3 : 1)) & 3; return; }
       const hv = app.view.hover;
+      if (hv && hv.car) {
+        if (hv.car.car.type !== 'loco') { this.warn('Only locomotives have a facing'); return; }
+        if (!FG.trains.flipCar(this.g, hv.car.train, hv.car.index)) this.warn('Stop the train before turning a locomotive');
+        return;
+      }
       if (hv && hv.ent) {
         const e = hv.ent;
         if (!this.inReach(e.x + e.w / 2, e.y + e.h / 2, BUILD_REACH)) { this.warn('Out of reach'); return; }
@@ -182,6 +198,8 @@
       if (c && c.bp) { this.pasteBlueprint(c.bp); return; }
       if (c && c.item) {
         const it = D.items[c.item];
+        if (it.car) { this.placeCar(c.item); return; }
+        if (hv && hv.car && !it.place) { this.insertIntoCar(hv.car, c.item, e.ctrlKey); return; }
         if (hv && hv.ent && (e.ctrlKey || !it.place)) { this.insertInto(hv.ent, c.item, e.ctrlKey); return; }
         if (it.place) { this.drag = { last: null, placed: [] }; this.dragBuild(); return; }
         if (c.item === 'grenade') { g.enemies.throwGrenade(this.mouse.wx, this.mouse.wy); return; }
@@ -189,6 +207,12 @@
         return;
       }
       if (!hv) return;
+      if (hv.car) {
+        const p = FG.trains.carPose(hv.car.train, hv.car.index);
+        if (!this.inReach(p.x, p.y, BUILD_REACH)) { this.warn('Out of reach'); return; }
+        app.ui.open('train', hv.car);
+        return;
+      }
       if (hv.ent) {
         const e2 = hv.ent;
         if (!this.inReach(e2.x + e2.w / 2, e2.y + e2.h / 2, BUILD_REACH)) { this.warn('Out of reach'); return; }
@@ -205,6 +229,32 @@
         g.removeGhost(gh);
         if (!g.build(item, gh.x, gh.y, gh.dir, gh.settings)) g.addGhost(gh.p, gh.x, gh.y, gh.dir, gh.settings);
       }
+    }
+
+    placeCar(itemId) {
+      const g = this.g;
+      const m = this.mouse;
+      if (!g.player.inv.count(itemId)) { this.warn('You have no ' + D.items[itemId].name); this.app.cursor = null; return; }
+      if (!this.inReach(m.tx + 0.5, m.ty + 0.5, BUILD_REACH)) { this.warn('Out of reach'); return; }
+      const r = FG.trains.placeCar(g, D.items[itemId].car, m.tx, m.ty, this.app.dir);
+      if (!r.ok) { this.warn(r.reason); return; }
+      g.player.inv.remove(itemId, 1);
+      FG.emit('sound', 'place');
+      FG.emit('inventory');
+      if (!g.player.inv.count(itemId)) this.app.cursor = null;
+    }
+
+    insertIntoCar(hit, id, all) {
+      const g = this.g;
+      const p = FG.trains.carPose(hit.train, hit.index);
+      if (!this.inReach(p.x, p.y, BUILD_REACH)) { this.warn('Out of reach'); return; }
+      const have = g.player.inv.count(id);
+      if (!have) { this.app.cursor = null; return; }
+      const n = all ? have : Math.min(have, D.items[id].stack);
+      const k = FG.trains.carInsert(hit.car, id, n);
+      if (k > 0) { g.player.inv.remove(id, k); FG.emit('message', 'Inserted ' + k + ' ' + D.items[id].name.toLowerCase(), 'info'); }
+      else this.warn(hit.car.type === 'loco' ? 'Locomotives only take fuel' : 'That wagon is full');
+      if (!g.player.inv.count(id)) this.app.cursor = null;
     }
 
     insertInto(ent, id, all) {
@@ -239,7 +289,7 @@
       const hv = this.app.view.hover;
       if (!hv || !hv.ent) return;
       const e = hv.ent;
-      this.app.copied = { recipe: e.recipe || null, filter: e.filter, prio: e.prio };
+      this.app.copied = { recipe: e.recipe || null, filter: e.filter, prio: e.prio, name: e.name };
       this.app.ui.toast('Settings copied' + (e.recipe ? ': ' + D.recipes[e.recipe].name : ''));
     }
     pasteSettings(e) {
@@ -299,6 +349,7 @@
       }
       const ent = g.build(itemId, x, y, dir, settings);
       if (ent && pr.kind === 'underground' && ent.ug === 'out') this.app.dir = ent.dir;
+      if (ent && pr.kind === 'rail' && !chk.replace) FG.trains.autoConnect(g, ent, this.app.dir);
       if (!g.player.inv.count(itemId) && !g.bonus.drones) this.app.cursor = null;
       return ent;
     }
@@ -311,6 +362,7 @@
       const pv = this.previewFor(c.item, app.dir);
       const last = this.drag.last;
       if (last && last[0] === pv.x && last[1] === pv.y) return;
+      if (pr.id === 'rail') { this.dragRail(c, pv); return; }
       if (pr.kind === 'belt' && last) {
         // Walk tile by tile toward the mouse, turning belts to follow the drag.
         let [x, y] = last;
@@ -339,6 +391,34 @@
       this.drag.last = [pv.x, pv.y];
     }
 
+    // Rails join tile to tile along the drag path, so side-by-side tracks stay separate.
+    dragRail(c, pv) {
+      const g = this.g, app = this.app;
+      const last = this.drag.last;
+      if (!last) {
+        let e = FG.trains.railAt(g, pv.x, pv.y);
+        if (!e && g.player.inv.count(c.item)) e = this.tryBuild(c.item, pv.x, pv.y, 0, false);
+        this.drag.last = [pv.x, pv.y];
+        return;
+      }
+      let [x, y] = last;
+      let guard = 0;
+      while ((x !== pv.x || y !== pv.y) && guard++ < 64) {
+        const dx = pv.x - x, dy = pv.y - y;
+        const d = Math.abs(dx) >= Math.abs(dy) ? (dx > 0 ? 1 : 3) : dy > 0 ? 2 : 0;
+        const prev = FG.trains.railAt(g, x, y);
+        x += FG.DX[d]; y += FG.DY[d];
+        app.dir = d;
+        let e = FG.trains.railAt(g, x, y);
+        if (!e) {
+          if (!app.cursor || !g.player.inv.count(c.item)) { this.warn('You have no more rails'); break; }
+          e = this.tryBuild(c.item, x, y, 0, false);
+        }
+        if (prev && e) FG.trains.connect(g, prev, e);
+      }
+      this.drag.last = [pv.x, pv.y];
+    }
+
     // --------------------------------------------------------- blueprints
     finishSelect(s) {
       const g = this.g, app = this.app;
@@ -357,7 +437,7 @@
         const bw = Math.max(...inside.map((e) => e.x + e.w)) - bx, bh = Math.max(...inside.map((e) => e.y + e.h)) - by;
         const bp = {
           w: bw, h: bh,
-          ents: inside.map((e) => ({ p: e.p, dx: e.x - bx, dy: e.y - by, dir: e.dir, settings: { recipe: e.recipe || null, filter: e.filter, prio: e.prio } })),
+          ents: inside.map((e) => ({ p: e.p, dx: e.x - bx, dy: e.y - by, dir: e.dir, settings: { recipe: e.recipe || null, filter: e.filter, prio: e.prio, mask: e.mask, name: e.name } })),
         };
         app.blueprint = bp;
         app.cursor = { bp };
@@ -365,6 +445,16 @@
       }
       if (s.mode === 'cut' || s.mode === 'decon') {
         let picked = 0, marked = 0, left = 0;
+        // Rail cars first, so the track under them can be picked up too.
+        for (const tr of g.rail.trains.slice()) {
+          for (let i = tr.cars.length - 1; i >= 0; i--) {
+            if (tr.dead) break;
+            const p = FG.trains.carPose(tr, i);
+            if (p.x < x0 || p.y < y0 || p.x > x1 + 1 || p.y > y1 + 1) continue;
+            if (this.inReach(p.x, p.y, BUILD_REACH) && g.pickUpCar({ train: tr, car: tr.cars[i], index: i })) picked++;
+            else left++;
+          }
+        }
         for (const e of inside) {
           if (this.inReach(e.x + e.w / 2, e.y + e.h / 2, BUILD_REACH) && g.pickUpEntity(e)) picked++;
           else if (g.bonus.drones) { e.decon = true; marked++; }
@@ -420,10 +510,11 @@
           const n = g.enemies.nestTiles.get(m.ty * g.world.W + m.tx);
           if (n) hv.enemy = { x: n.x + 1, y: n.y + 1, hp: n.hp };
         }
-        hv.ent = FG.entAt(g, m.tx, m.ty);
-        if (!hv.ent) hv.ghost = g.ghostAt(m.tx, m.ty);
+        hv.car = FG.trains.carAtPoint(g, wx, wy);
+        hv.ent = hv.car ? null : FG.entAt(g, m.tx, m.ty);
+        if (!hv.ent && !hv.car) hv.ghost = g.ghostAt(m.tx, m.ty);
         const i = m.ty * g.world.W + m.tx;
-        if (!hv.ent && g.world.res[i] && g.world.amt[i] > 0) hv.res = true;
+        if (!hv.ent && !hv.car && g.world.res[i] && g.world.amt[i] > 0) hv.res = true;
       }
       view.hover = m.over ? hv : null;
       if (view.select) { view.select.x1 = m.tx; view.select.y1 = m.ty; }
@@ -436,7 +527,7 @@
         const [ax, ay] = this.blueprintAnchor(c.bp);
         view.build = {
           p: c.bp.ents[0].p,
-          previews: c.bp.ents.map((b) => ({ p: b.p, x: ax + b.dx, y: ay + b.dy, dir: b.dir, ok: FG.canPlace(g, b.p, ax + b.dx, ay + b.dy, b.dir, { noReplace: true }).ok })),
+          previews: c.bp.ents.map((b) => ({ p: b.p, x: ax + b.dx, y: ay + b.dy, dir: b.dir, mask: b.settings && b.settings.mask, ok: FG.canPlace(g, b.p, ax + b.dx, ay + b.dy, b.dir, { noReplace: true }).ok })),
         };
       } else if (m.over && c && c.item && D.items[c.item].place && !view.select) {
         const pv = this.previewFor(c.item, app.dir);
@@ -447,7 +538,26 @@
         view.build = { p: pv.p, previews: [{ p: pv.p, x: pv.x, y: pv.y, dir: pv.dir, ok: chk.ok && (reach || c.ghost) && (have || g.bonus.drones) }], showPoles: this.keys.has('ShiftLeft') || this.keys.has('ShiftRight') };
         if (m.left && this.drag) this.dragBuild();
       }
-      R.canvas.classList.toggle('cursor-build', !!(c && (c.bp || (c.item && D.items[c.item].place))) || !!this.mode);
+      view.carPreview = null;
+      if (m.over && c && c.item && D.items[c.item].car) {
+        const plan = FG.trains.planCar(g, m.tx, m.ty, app.dir);
+        let pose = { x: m.tx + 0.5, y: m.ty + 0.5, angle: (app.dir - 1) * Math.PI / 2 };
+        if (plan.ok && plan.tiles) {
+          const tmp = { tiles: plan.tiles.map((t) => Object.assign({}, t)), headS: 0 };
+          let s0 = 0;
+          for (const t of tmp.tiles) { t.len = t.hin === t.hout ? 1 : Math.PI / 4; t.s0 = s0; s0 += t.len; }
+          tmp.cars = [{}];
+          tmp.headS = s0 - FG.trains.GAP / 2;
+          pose = FG.trains.carPose(tmp, 0);
+        } else if (plan.ok && plan.attach) {
+          const tr = plan.attach.train;
+          const sEnd = plan.attach.front ? tr.headS + FG.trains.PITCH : tr.headS - FG.trains.trainLen(tr) - FG.trains.GAP;
+          const a = FG.trains.pointAt(tr, sEnd - FG.trains.CAR_LEN), b = FG.trains.pointAt(tr, sEnd);
+          pose = { x: (a[0] + b[0]) / 2, y: (a[1] + b[1]) / 2, angle: Math.atan2(b[1] - a[1], b[0] - a[0]) };
+        }
+        view.carPreview = Object.assign(pose, { type: D.items[c.item].car, ok: plan.ok });
+      }
+      R.canvas.classList.toggle('cursor-build', !!(c && (c.bp || (c.item && (D.items[c.item].place || D.items[c.item].car)))) || !!this.mode);
       view.showPoleAreas = false;
     }
 
@@ -466,7 +576,13 @@
       const m = this.mouse;
       const hv = app.view.hover;
       if (m.right && hv && !app.titleShown) {
-        if (hv.ent) {
+        if (hv.car) {
+          const p = FG.trains.carPose(hv.car.train, hv.car.index);
+          if (this.inReach(p.x, p.y, BUILD_REACH)) {
+            inp.mine = { kind: 'car', id: hv.car.car.id, key: 'c' + hv.car.car.id };
+            app.view.mineTarget = { cx: p.x, cy: p.y };
+          } else this.warn('Out of reach');
+        } else if (hv.ent) {
           const e = hv.ent;
           if (this.inReach(e.x + e.w / 2, e.y + e.h / 2, BUILD_REACH)) {
             inp.mine = { kind: 'ent', id: e.id, key: 'e' + e.id };
@@ -504,7 +620,9 @@
         const pr = D.protos[b.p];
         const [fw, fh] = FG.footprint(pr, b.dir);
         const rot = pr.rotatable || pr.w !== pr.h;
-        return { p: b.p, dx: cur.h - (b.dy + fh), dy: b.dx, dir: rot ? (b.dir + 1) & 3 : b.dir, settings: b.settings };
+        let settings = b.settings;
+        if (settings && settings.mask !== undefined) settings = Object.assign({}, settings, { mask: ((settings.mask << 1) | (settings.mask >> 3)) & 15 });
+        return { p: b.p, dx: cur.h - (b.dy + fh), dy: b.dx, dir: rot ? (b.dir + 1) & 3 : b.dir, settings };
       });
       cur = { w: cur.h, h: cur.w, ents };
     }

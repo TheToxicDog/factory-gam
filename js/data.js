@@ -75,6 +75,12 @@
   item('big_pole', 'Pylon', 'logistics', 'power', { place: 'big_pole' });
   item('pipe', 'Pipe', 'logistics', 'fluid', { stack: 100, place: 'pipe' });
   item('pipe_ug', 'Tunnel pipe', 'logistics', 'fluid', { place: 'pipe_ug' });
+  item('rail', 'Rail', 'logistics', 'rail', { stack: 100, place: 'rail' });
+  item('train_stop', 'Train stop', 'logistics', 'rail', { stack: 10, place: 'train_stop' });
+  item('rail_signal', 'Rail signal', 'logistics', 'rail', { place: 'rail_signal' });
+  item('chain_signal', 'Chain signal', 'logistics', 'rail', { place: 'chain_signal' });
+  item('locomotive', 'Locomotive', 'logistics', 'rail', { stack: 5, car: 'loco' });
+  item('cargo_wagon', 'Cargo wagon', 'logistics', 'rail', { stack: 5, car: 'wagon' });
   // Production
   item('offshore_pump', 'Water pump', 'production', 'energy', { place: 'offshore_pump' });
   item('boiler', 'Boiler', 'production', 'energy', { place: 'boiler' });
@@ -148,6 +154,12 @@
   recipe('circuit', 0.5, { iron_plate: 1, copper_wire: 3 }, { circuit: 1 }, S);
   recipe('pipe', 0.5, { iron_plate: 1 }, { pipe: 1 }, S);
   recipe('pipe_ug', 0.5, { pipe: 10, iron_plate: 5 }, { pipe_ug: 2 }, S);
+  recipe('rail', 0.5, { stone: 1, steel_plate: 1, iron_plate: 1 }, { rail: 2 });
+  recipe('train_stop', 0.5, { circuit: 5, iron_plate: 6, steel_plate: 3 }, { train_stop: 1 });
+  recipe('rail_signal', 0.5, { circuit: 1, iron_plate: 5 }, { rail_signal: 1 });
+  recipe('chain_signal', 0.5, { circuit: 1, iron_plate: 5 }, { chain_signal: 1 });
+  recipe('locomotive', 4, { engine_unit: 20, circuit: 10, steel_plate: 30 }, { locomotive: 1 });
+  recipe('cargo_wagon', 1, { iron_gear: 10, iron_plate: 20, steel_plate: 20 }, { cargo_wagon: 1 });
   recipe('engine_unit', 10, { steel_plate: 1, iron_gear: 1, pipe: 2 }, { engine_unit: 1 }, ADV);
   recipe('advanced_circuit', 6, { circuit: 2, plastic: 2, copper_wire: 4 }, { advanced_circuit: 1 });
   recipe('electric_motor', 10, { engine_unit: 1, circuit: 2 }, { electric_motor: 1 }, { cat: 'advanced', fin: { lubricant: 15 } });
@@ -281,6 +293,11 @@
 
   proto('pipe', 'pipe', { hp: 100, fb: [{ cap: 100, io: 'both', conns: ALL4 }] });
   proto('pipe_ug', 'pipe_ug', { hp: 150, maxDist: 10, rotatable: true, fb: [{ cap: 100, io: 'both', conns: [[0, 0, 0]] }] });
+  // Rails connect only where track was laid (mask bits); stops and signals are rail pieces too.
+  proto('rail', 'rail', { hp: 200, solid: false, role: 'rail' });
+  proto('train_stop', 'rail', { hp: 250, solid: false, role: 'stop' });
+  proto('rail_signal', 'rail', { hp: 150, solid: false, role: 'signal' });
+  proto('chain_signal', 'rail', { hp: 150, solid: false, role: 'chain' });
 
   proto('offshore_pump', 'offshore', { rate: 1200, rotatable: true, hp: 150, fb: [{ cap: 100, io: 'out', filter: 'water', conns: [[0, 0, 0]] }] });
   proto('boiler', 'boiler', {
@@ -374,6 +391,12 @@
   tech('adv_material', 'Advanced smelting', RG, 75, 15, ['steel', 'logistic_science'], ['steel_furnace']);
   tech('power_distribution', 'Power distribution', RG, 120, 15, ['steel', 'logistic_science'], ['medium_pole', 'big_pole']);
   tech('solar', 'Solar energy', RG, 100, 15, ['steel', 'logistic_science'], ['solar_panel']);
+  tech('railway', 'Railway', RG, 75, 30, ['logistics_2', 'engine'], ['rail', 'locomotive', 'cargo_wagon', 'train_stop'], {
+    desc: 'Lay track by dragging. Trains follow schedules between named stops; arms load and unload stopped wagons.',
+  });
+  tech('rail_signals', 'Rail signals', RG, 100, 30, ['railway'], ['rail_signal', 'chain_signal'], {
+    desc: 'Signals split track into blocks that hold one train each. Chain signals let a train through only if it can clear the next block too.',
+  });
   tech('fluid_handling', 'Fluid handling', RG, 50, 15, ['logistic_science', 'steel'], ['storage_tank']);
   tech('oil_processing', 'Oil processing', RG, 100, 15, ['fluid_handling'], ['pumpjack', 'refinery', 'chem_plant', 'basic_refining', 'solid_fuel_pet']);
   tech('plastics', 'Plastics', RG, 200, 15, ['oil_processing'], ['plastic']);

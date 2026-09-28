@@ -50,10 +50,39 @@
     if (pr.kind === 'engine') return (e.out || 0) > 1 ? ['Generating', 'good'] : e.net ? ['Idle', ''] : ['Not connected to a pole', 'warn'];
     if (pr.kind === 'solar') return e.net ? ['Generating', 'good'] : ['Not connected to a pole', 'warn'];
     if (pr.kind === 'accumulator') return e.net ? ['Storing energy', 'good'] : ['Not connected to a pole', 'warn'];
+    if (pr.kind === 'rail') {
+      if (pr.role === 'stop') return ['Stop “' + e.name + '”', 'good'];
+      if (pr.role === 'rail') return null;
+      const st = FG.trains.blockState(FG.app.game, e.x, e.y);
+      return st === 'free' ? ['Block clear', 'good'] : st === 'reserved' ? ['Block reserved by a train', 'warn'] : ['Block occupied', 'bad'];
+    }
     if (pr.kind === 'chest' || pr.kind === 'wall' || pr.kind === 'pipe' || pr.kind === 'pipe_ug' || pr.kind === 'tank' || FG.isBeltKind(pr.kind)) return null;
     if (FG.power.isElectric(pr) && !e.net && pr.kind !== 'engine') return ['Not connected to a pole', 'bad'];
     return STATUS[e.status] || [e.status, ''];
   }
+  const COND_TEXT = { full: 'until the cargo is full', empty: 'until the cargo is empty', time: 'for a set time', inactive: 'until loading stops' };
+  function trainStatus(g, tr) {
+    if (!tr.cars.some((c) => c.type === 'loco')) return ['Needs a locomotive', 'bad'];
+    if (tr.noFuel && tr.state !== 'station') return ['Out of fuel', 'bad'];
+    if (tr.mode === 'manual') return [tr.speed > 0 ? 'Driving manually' : 'Manual control', ''];
+    const e = tr.schedule[tr.cur];
+    switch (tr.state) {
+      case 'no_schedule': return ['No schedule: add a stop below', 'warn'];
+      case 'no_path': return [tr.msg || 'No path', 'bad'];
+      case 'station': {
+        let t = 'At ' + (e ? e.station : 'stop') + ', waiting ' + (e ? COND_TEXT[e.cond] : '');
+        if (e && e.cond === 'time') t += ' (' + Math.max(0, Math.ceil((e.v || 10) - tr.wait / 60)) + 's left)';
+        return [t, 'good'];
+      }
+      case 'moving':
+        if (tr.speed === 0 && tr.blocked === 'signal') return ['Waiting at a signal', 'warn'];
+        if (tr.speed === 0 && tr.blocked === 'train') return ['Waiting for another train to clear the track', 'warn'];
+        return ['Heading to ' + (e ? e.station : '?'), 'good'];
+    }
+    return ['Planning a route', ''];
+  }
+  FG.trainStatus = trainStatus;
+
   function statusPill(e) {
     const s = statusOf(e);
     return s ? h('span', { class: 'status ' + s[1], text: s[0] }) : null;
@@ -342,9 +371,25 @@
       const el = this.$('hud-hover');
       const hv = this.app.view.hover;
       const g = this.g;
-      if (!hv || (!hv.ent && !hv.res && !hv.enemy && !hv.ghost) || this.win) { el.hidden = true; return; }
+      if (!hv || (!hv.ent && !hv.res && !hv.enemy && !hv.ghost && !hv.car) || this.win) { el.hidden = true; return; }
       const parts = [];
-      if (hv.ent) {
+      if (hv.car) {
+        const tr = hv.car.train, car = hv.car.car;
+        const kv = (k, v) => parts.push(h('div', { class: 'kv' }, h('span', { text: k }), h('span', { class: 'num', text: v })));
+        parts.push(h('h3', { text: nameOf(FG.trains.itemFor(car)) + (car.type === 'loco' && car.flip ? ' (facing back)' : '') }));
+        const st = trainStatus(g, tr);
+        parts.push(h('div', null, h('span', { class: 'status ' + st[1], text: st[0] })));
+        kv('Speed', Math.round(tr.speed * 60 * 3.6) + ' km/h');
+        kv('Train', tr.cars.filter((c) => c.type === 'loco').length + ' loco · ' + tr.cars.filter((c) => c.type === 'wagon').length + ' wagons');
+        if (car.type === 'loco') kv('Fuel', String(FG.trains.fuelOf(tr)));
+        else {
+          const t = car.inv.totals();
+          const keys = Object.keys(t).slice(0, 12);
+          if (keys.length) parts.push(h('div', { class: 'chips' }, keys.map((k) => slotEl(k, t[k], { tip: false }))));
+          else kv('Cargo', 'empty');
+        }
+        parts.push(h('div', { class: 'kv', style: 'margin-top:6px;font-size:12px' }, h('span', { text: 'Click to open · Enter to ride · R turns a stopped locomotive' })));
+      } else if (hv.ent) {
         const e = hv.ent;
         const pr = D.protos[e.p];
         parts.push(h('h3', { text: entName(e) }));
@@ -854,6 +899,25 @@
         case 'wall':
           put(kvs([['Health', () => Math.ceil(ent.hp) + ' / ' + pr.hp]]));
           break;
+        case 'rail': {
+          if (pr.role === 'stop') {
+            const input = h('input', { type: 'text', id: 'stop-name', value: ent.name, maxlength: '32', 'aria-label': 'Stop name', style: 'font:600 16px var(--font-ui)' });
+            input.addEventListener('change', () => this.renameStop(ent, input.value));
+            input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') input.blur(); });
+            put(h('div', { class: 'group' }, h('label', { class: 'label', for: 'stop-name', text: 'Stop name' }), input),
+              kvs([['Trains heading here', () => String(g.rail.trains.filter((t) => t.mode === 'auto' && t.schedule[t.cur] && t.schedule[t.cur].station === ent.name && t.state !== 'station').length)],
+                ['Trains stopped here', () => String(g.rail.trains.filter((t) => t.state === 'station' && t.schedule[t.cur] && t.schedule[t.cur].station === ent.name).length)]]),
+              h('div', { class: 'hint', text: 'Trains stop with their front at this tile. Stops with the same name share traffic: a train goes to the nearest one. Arms beside the track load and unload stopped wagons.' }));
+          } else if (pr.role === 'rail') {
+            put(kvs([['Connections', () => ['north', 'east', 'south', 'west'].filter((_, d) => ent.mask & (1 << d)).join(', ') || 'none']]),
+              h('div', { class: 'hint', text: 'Drag with rails in hand to lay track. Start a drag on existing track to branch off it. Picking up a piece removes its connections.' }));
+          } else {
+            put(h('div', { class: 'hint', text: pr.role === 'chain'
+              ? 'A chain signal lets a train in only when it can also get through the next signal. Put them at the entrances of junctions so trains never stop inside one.'
+              : 'A rail signal splits the track into blocks. Only one automatic train may be in a block at a time; others wait before the signal.' }));
+          }
+          break;
+        }
         default:
           if (FG.isBeltKind(pr.kind)) put(kvs([['Speed', () => Math.round(pr.speed * 8) + ' items/s'], ['Type', () => (pr.kind === 'underground' ? (ent.ug === 'in' ? 'Entrance' : 'Exit') + (ent.pair ? ', paired' : ', not paired') : pr.kind)]]));
       }
@@ -892,6 +956,140 @@
       else k = FG.insertItem(g, ent, id, n, 'direct');
       if (k > 0) g.player.inv.remove(id, k);
       else this.toast(entName(ent) + ' does not accept ' + it.name, 'warn');
+    }
+
+    renameStop(ent, name) {
+      const g = this.g;
+      name = (name || '').trim().slice(0, 32);
+      if (!name || name === ent.name) return;
+      const old = ent.name;
+      ent.name = name;
+      // Keep schedules pointing here if this was the only stop with the old name.
+      if (!FG.trains.stopsNamed(g, old).length) for (const tr of g.rail.trains) for (const e of tr.schedule) if (e.station === old) e.station = name;
+      this.toast('Renamed to ' + name);
+    }
+
+    build_train(hit) {
+      const g = this.g, app = this.app;
+      const tr = hit.train;
+      if (!tr || tr.dead) return null;
+      const w = this.frame('train', 'Train');
+      const status = h('div');
+      const left = h('div', { class: 'pane machine', style: 'min-width:min(460px, calc(100vw - 60px))' });
+      const carUpd = [], schedUpd = [];
+      const takeToPlayer = (inv, id, n) => {
+        const k = Math.min(n, g.player.inv.space(id));
+        if (k <= 0) { this.toast('Inventory full', 'warn'); return; }
+        inv.remove(id, k);
+        g.player.inv.add(id, k);
+      };
+      // Mode and boarding
+      const seg = h('div', { class: 'seg' });
+      const renderSeg = () => {
+        seg.innerHTML = '';
+        for (const [v, l] of [['auto', 'Automatic'], ['manual', 'Manual']]) {
+          seg.appendChild(h('button', { class: tr.mode === v ? 'on' : '', text: l, onclick: () => {
+            tr.mode = v;
+            if (v === 'auto') tr.state = 'plan';
+            renderSeg();
+          } }));
+        }
+      };
+      renderSeg();
+      const rideBtn = h('button', { class: 'btn small', text: g.player.vehicle === tr.id ? 'Get out' : 'Get in', onclick: () => {
+        if (g.player.vehicle === tr.id) FG.trains.exit(g);
+        else { const p = FG.trains.carPose(tr, 0); if (FG.dist2(p.x, p.y, g.player.x, g.player.y) > 144) { this.toast('Walk closer to board', 'warn'); return; } g.player.vehicle = tr.id; if (!tr.schedule.length) tr.mode = 'manual'; }
+        this.close();
+      } });
+      left.append(status, h('div', { class: 'rowx' }, h('span', { class: 'label', text: 'Control' }), seg, rideBtn));
+      // Cars: fuel and cargo
+      const carsBox = h('div', { class: 'group train-cars' });
+      const renderCars = () => {
+        carsBox.innerHTML = '';
+        carUpd.length = 0;
+        carsBox.appendChild(h('div', { class: 'label', text: 'Cars (front first)' }));
+        tr.cars.forEach((car, i) => {
+          const row = h('div', { class: 'car-row' });
+          const tag = h('div', { class: 'car-tag' },
+            h('b', { text: (i + 1) + '. ' + (car.type === 'loco' ? 'Locomotive' : 'Wagon') }),
+            car.type === 'loco' ? h('span', { text: car.flip ? 'faces back ←' : 'faces front →' }) : null);
+          const grid = h('div', { class: 'grid', style: car.type === 'loco' ? 'grid-template-columns:repeat(3, var(--slot))' : '' });
+          const els = car.inv.slots.map((_, j) => {
+            const el = slotEl(null, undefined, { onDown: (ev) => { const sl = car.inv.slots[j]; if (sl) takeToPlayer(car.inv, sl.id, ev.shiftKey ? car.inv.count(sl.id) : sl.n); } });
+            grid.appendChild(el);
+            return el;
+          });
+          carUpd.push(() => car.inv.slots.forEach((sl, j) => setSlot(els[j], sl && sl.id, sl ? sl.n : undefined)));
+          row.append(tag, grid);
+          if (car.type === 'loco') row.appendChild(h('button', { class: 'btn small', text: 'Turn', title: 'Turn this locomotive around (train must be stopped)', onclick: () => {
+            if (!FG.trains.flipCar(g, tr, i)) this.toast('Stop the train first', 'warn'); else renderCars();
+          } }));
+          carsBox.appendChild(row);
+        });
+      };
+      renderCars();
+      // Schedule editor
+      const sched = h('div', { class: 'group' });
+      const renderSched = () => {
+        sched.innerHTML = '';
+        schedUpd.length = 0;
+        sched.appendChild(h('div', { class: 'label', text: 'Schedule' }));
+        const names = FG.trains.stopNames(g);
+        tr.schedule.forEach((e, i) => {
+          const stSel = h('select', { id: 'sched-station-' + i, 'aria-label': 'Stop' });
+          for (const n of new Set(names.concat([e.station]))) stSel.appendChild(h('option', { value: n, text: n, selected: n === e.station }));
+          stSel.addEventListener('change', () => { e.station = stSel.value; if (tr.cur === i && tr.state !== 'station') tr.state = 'plan'; });
+          const cond = h('select', { id: 'sched-cond-' + i, 'aria-label': 'Wait condition' });
+          for (const [v, l] of [['full', 'until full'], ['empty', 'until empty'], ['time', 'for seconds'], ['inactive', 'until idle for seconds']]) cond.appendChild(h('option', { value: v, text: l, selected: v === e.cond }));
+          const val = h('input', { type: 'number', id: 'sched-v-' + i, min: '1', max: '600', value: String(e.v || 10), style: 'width:64px', 'aria-label': 'Seconds' });
+          val.hidden = e.cond !== 'time' && e.cond !== 'inactive';
+          cond.addEventListener('change', () => { e.cond = cond.value; if (!e.v) e.v = 10; val.hidden = e.cond !== 'time' && e.cond !== 'inactive'; });
+          val.addEventListener('change', () => { e.v = FG.clamp(parseInt(val.value, 10) || 10, 1, 600); });
+          const cur = h('span', { class: 'num', style: 'width:18px;color:var(--amber)', text: '' });
+          schedUpd.push(() => { cur.textContent = tr.cur === i && tr.mode === 'auto' ? '▶' : ''; });
+          sched.appendChild(h('div', { class: 'sched-row' },
+            cur, stSel, h('span', { class: 'hint', text: 'wait' }), cond, val,
+            h('button', { class: 'btn small', text: 'Go now', title: 'Send the train here next', onclick: () => { tr.cur = i; if (tr.mode === 'auto') tr.state = 'plan'; } }),
+            h('button', { class: 'btn small danger', text: '✕', 'aria-label': 'Remove stop', onclick: () => { tr.schedule.splice(i, 1); if (tr.cur >= tr.schedule.length) tr.cur = 0; renderSched(); } })));
+        });
+        const add = h('button', { class: 'btn small', text: '+ Add stop', onclick: () => {
+          const n = FG.trains.stopNames(g);
+          if (!n.length) { this.toast('Place a train stop first', 'warn'); return; }
+          const prev = tr.schedule.length ? tr.schedule[tr.schedule.length - 1].station : null;
+          tr.schedule.push({ station: n.find((x) => x !== prev) || n[0], cond: tr.schedule.length ? 'empty' : 'full', v: 10 });
+          renderSched();
+        } });
+        sched.appendChild(h('div', { style: 'margin-top:4px' }, add));
+        if (!tr.schedule.length) sched.appendChild(h('div', { class: 'hint', text: 'Add stops, then switch to Automatic. A typical route: wait at the mine until full, then at the base until empty.' }));
+      };
+      renderSched();
+      left.append(carsBox, sched, h('div', { class: 'hint', text: 'A train only drives the way a locomotive faces. For stations at the end of a line, add a second locomotive facing back, or build a loop.' }));
+      const inv = this.invGrid((i, sl, ev) => {
+        const id = sl.id;
+        let left2 = ev.shiftKey ? g.player.inv.count(id) : sl.n;
+        let moved = 0;
+        const order = D.items[id].fuel ? tr.cars.filter((c) => c.type === 'loco').concat(tr.cars.filter((c) => c.type === 'wagon')) : tr.cars.filter((c) => c.type === 'wagon');
+        for (const car of order) {
+          if (left2 <= 0) break;
+          const k = FG.trains.carInsert(car, id, left2);
+          if (k > 0) { g.player.inv.remove(id, k); left2 -= k; moved += k; }
+        }
+        if (!moved) this.toast('No room for that in this train', 'warn');
+      });
+      const right = h('div', { class: 'pane' }, h('h3', { text: 'Your inventory' }), inv.el, h('div', { class: 'hint', text: 'Click fuel to load the locomotives, anything else goes into the wagons.' }));
+      w.body.append(h('div', { class: 'panes' }, left, right));
+      let lastCars = tr.cars.length;
+      w.update = () => {
+        if (tr.dead) { this.close(); return; }
+        if (tr.cars.length !== lastCars) { lastCars = tr.cars.length; renderCars(); }
+        inv.update();
+        const st = trainStatus(g, tr);
+        const k = st.join('|');
+        if (status.dataset.k !== k) { status.dataset.k = k; status.innerHTML = ''; status.appendChild(h('span', { class: 'status ' + st[1], text: st[0] })); }
+        for (const f of carUpd) f();
+        for (const f of schedUpd) f();
+      };
+      return w;
     }
 
     networkBlock(ent, upd) {
@@ -1243,7 +1441,7 @@
         ['Production stats', 'P'], ['Map', 'M'], ['Detail overlay', 'Alt'], ['Pollution overlay', 'F'],
         ['Hotbar', '1 – 0'], ['Quick transfer', 'Ctrl+click'], ['Copy / paste settings', 'Shift+R-click / Shift+click'], ['Shoot nearest enemy', 'Hold Space'],
         ['Throw grenade', 'G'], ['Copy area as blueprint', 'Ctrl+C then drag'], ['Cut area', 'Ctrl+X then drag'], ['Paste blueprint', 'Ctrl+V'],
-        ['Remove area', 'X then drag'], ['Zoom', 'Mouse wheel'], ['Pause menu', 'Esc'], ['Show all pole coverage', 'Shift (holding a pole)'],
+        ['Remove area', 'X then drag'], ['Board or leave a train', 'Enter'], ['Drive a train', 'W / S, A / D at junctions'], ['Zoom', 'Mouse wheel'], ['Pause menu', 'Esc'], ['Show all pole coverage', 'Shift (holding a pole)'],
       ];
       w.body.append(h('div', { class: 'help-grid' }, keys.map(([a, k]) => h('div', null, h('span', { text: a }), h('kbd', { text: k })))),
         h('ul', { class: 'help-tips' },
@@ -1253,7 +1451,8 @@
           h('li', { text: 'Power: water pump on a shore → boiler (fuel it) → steam engines. Poles connect machines inside their blue area.' }),
           h('li', { text: 'Machines show a badge when stuck: lightning for power, … for missing ingredients, ▲ for a full output.' }),
           h('li', { text: 'Pollution provokes the native hives. Put turrets and walls between your factory and them, and keep turrets fed with magazines.' }),
-          h('li', { text: 'After researching Construction drones, blueprints and ghosts build themselves while you stand near them with the items.' })));
+          h('li', { text: 'After researching Construction drones, blueprints and ghosts build themselves while you stand near them with the items.' }),
+          h('li', { text: 'Trains: drag rails to lay track, place named train stops, put a locomotive and wagons on the rails, fuel it and give it a schedule. Rail signals keep several trains on one network apart.' })));
       return w;
     }
 

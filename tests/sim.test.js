@@ -360,6 +360,252 @@ test('fast replace upgrades belts keeping items', () => {
   assert(res.ent.lanes[0].ids[0] === 'coal', 'items kept');
 });
 
+// ------------------------------------------------------------------ trains
+// Lay track through a list of [x, y] tiles, placing `proto` pieces where given.
+function lay(g, pts, special) {
+  special = special || {};
+  let prev = null;
+  for (const [x, y] of pts) {
+    let e = FG.trains.railAt(g, x, y);
+    if (!e) e = place(g, special[x + ',' + y] || 'rail', x, y);
+    if (prev) FG.trains.connect(g, prev, e);
+    prev = e;
+  }
+}
+function line(x0, y0, x1, y1) {
+  const out = [];
+  const dx = Math.sign(x1 - x0), dy = Math.sign(y1 - y0);
+  let x = x0, y = y0;
+  out.push([x, y]);
+  while (x !== x1 || y !== y1) { x += dx; y += dy; out.push([x, y]); }
+  return out;
+}
+function rect(x0, y0, x1, y1) {
+  return line(x0, y0, x1, y0).concat(line(x1, y0 + 1, x1, y1), line(x1 - 1, y1, x0, y1), line(x0, y1 - 1, x0, y0 + 1));
+}
+function fuel(tr) { for (const c of tr.cars) if (c.type === 'loco') c.inv.add('coal', 50); }
+// Cars keep their length and the train's track always covers its tail.
+function intact(tr) {
+  if (tr.headS - FG.trains.trainLen(tr) < tr.tiles[0].s0 - 1e-6) return 'tail off track';
+  for (let i = 0; i < tr.cars.length; i++) {
+    const p = FG.trains.carPose(tr, i);
+    const len = Math.hypot(p.fx - p.bx, p.fy - p.by);
+    if (len < 1.6 || len > 2.41) return 'car ' + i + ' length ' + len.toFixed(2);
+  }
+  return null;
+}
+function allIntact(g) { for (const tr of g.rail.trains) { const bad = intact(tr); if (bad) return 'train ' + tr.id + ': ' + bad; } return null; }
+function noOverlap(g) {
+  const seen = new Map();
+  for (const tr of g.rail.trains) for (let i = 0; i < tr.cars.length; i++) {
+    const p = FG.trains.carPose(tr, i);
+    for (const [id, q] of seen) if (id !== tr.id && Math.hypot(p.x - q.x, p.y - q.y) < 1.5) return false;
+    seen.set(tr.id + ':' + i, p);
+  }
+  return true;
+}
+
+test('train runs a schedule between two stops', () => {
+  const g = newGame();
+  lay(g, line(60, 80, 110, 80), { '64,80': 'train_stop', '106,80': 'train_stop' });
+  const a = FG.trains.railAt(g, 64, 80), b = FG.trains.railAt(g, 106, 80);
+  a.name = 'Mine'; b.name = 'Base';
+  let r = FG.trains.placeCar(g, 'loco', 70, 80, 1);
+  assert(r.ok, 'place loco: ' + r.reason);
+  const tr = r.train;
+  r = FG.trains.placeCar(g, 'wagon', 67, 80, 1);
+  assert(r.ok && r.train === tr && tr.cars.length === 2, 'couple wagon: ' + r.reason);
+  r = FG.trains.placeCar(g, 'loco', 64, 80, 3); // rear locomotive facing west
+  assert(r.ok && r.train === tr && tr.cars.length === 3 && tr.cars[2].flip, 'rear loco faces back');
+  fuel(tr);
+  tr.schedule = [{ station: 'Base', cond: 'time', v: 2 }, { station: 'Mine', cond: 'time', v: 2 }];
+  tr.mode = 'auto';
+  let arrivedBase = false, arrivedMine = false;
+  for (let t = 0; t < 60 * 40 && !(arrivedBase && arrivedMine); t++) {
+    g.step();
+    const bad = allIntact(g);
+    if (bad) throw new Error('at tick ' + t + ' ' + bad);
+    const head = FG.trains.pointAt(tr, tr.headS);
+    if (tr.state === 'station' && Math.abs(head[0] - 107) < 0.6) arrivedBase = true;
+    if (arrivedBase && tr.state === 'station' && Math.abs(head[0] - 64) < 1.1) arrivedMine = true;
+  }
+  assert(arrivedBase, 'reached Base: state ' + tr.state + ' ' + tr.msg + ' head ' + FG.trains.pointAt(tr, tr.headS));
+  assert(arrivedMine, 'came back to Mine (reversing): state ' + tr.state + ' head ' + FG.trains.pointAt(tr, tr.headS));
+  assert(g.stats.total.c.coal > 0, 'locomotive burned fuel');
+});
+
+test('arms load a wagon at one stop and unload it at another', () => {
+  const g = newGame();
+  lay(g, line(50, 80, 110, 80), { '66,80': 'train_stop', '106,80': 'train_stop' });
+  FG.trains.railAt(g, 66, 80).name = 'Load';
+  FG.trains.railAt(g, 106, 80).name = 'Drop';
+  const tr = FG.trains.placeCar(g, 'loco', 66, 80, 1).train;
+  FG.trains.placeCar(g, 'wagon', 63, 80, 1);
+  const rear = FG.trains.placeCar(g, 'loco', 60, 80, 3);
+  assert(rear.ok && tr.cars.length === 3, 'rear loco coupled: ' + rear.reason);
+  fuel(tr);
+  // Loading: chest -> arm -> wagon (wagon sits over tiles 61..63 when the loco front is at the stop)
+  const src = place(g, 'iron_chest', 62, 82);
+  src.inv.add('iron_plate', 3200);
+  const arm = place(g, 'fast_inserter', 62, 81, 0);
+  place(g, 'solar_panel', 55, 83); place(g, 'solar_panel', 58, 83); place(g, 'small_pole', 61, 83);
+  // Unloading at Drop: wagon over 101..103
+  const dst = place(g, 'steel_chest', 102, 82);
+  place(g, 'fast_inserter', 102, 81, 2);
+  place(g, 'solar_panel', 95, 83); place(g, 'solar_panel', 98, 83); place(g, 'small_pole', 101, 83);
+  tr.schedule = [{ station: 'Load', cond: 'time', v: 8 }, { station: 'Drop', cond: 'empty' }];
+  tr.mode = 'auto';
+  run(g, 60 * 50);
+  const inDst = dst.inv.count('iron_plate');
+  assert(inDst > 10, 'plates delivered: ' + inDst + ' state ' + tr.state + ' cur ' + tr.cur + ' cargo ' + JSON.stringify(FG.trains.cargoTotals(tr)) + ' arm ' + arm.status);
+  assert(tr.arrivals >= 2, 'arrivals ' + tr.arrivals);
+});
+
+test('signalled loop keeps three trains apart', () => {
+  const g = newGame();
+  const loop = rect(60, 60, 120, 90);
+  const special = {};
+  // A signal every 12 tiles and two stops.
+  loop.forEach(([x, y], i) => { if (i % 12 === 6) special[x + ',' + y] = 'rail_signal'; });
+  special['90,60'] = 'train_stop';
+  special['90,90'] = 'train_stop';
+  lay(g, loop, special);
+  FG.trains.connect(g, FG.trains.railAt(g, 60, 61), FG.trains.railAt(g, 60, 60));
+  FG.trains.railAt(g, 90, 60).name = 'North';
+  FG.trains.railAt(g, 90, 90).name = 'South';
+  const trains = [];
+  for (const [x, y] of [[70, 60], [120, 75], [75, 90]]) {
+    const r = FG.trains.placeCar(g, 'loco', x, y, x === 120 ? 2 : y === 60 ? 1 : 3);
+    assert(r.ok, 'place ' + x + ',' + y + ': ' + r.reason);
+    fuel(r.train);
+    r.train.schedule = [{ station: 'North', cond: 'time', v: 1 }, { station: 'South', cond: 'time', v: 1 }];
+    r.train.mode = 'auto';
+    trains.push(r.train);
+  }
+  let ok = true;
+  for (let t = 0; t < 60 * 90; t++) {
+    g.step();
+    if (t % 5 === 0 && !noOverlap(g)) { ok = false; break; }
+    const bad = allIntact(g);
+    if (bad) throw new Error('at tick ' + t + ' ' + bad);
+  }
+  assert(ok, 'trains overlapped');
+  const arrivals = trains.map((t) => t.arrivals);
+  assert(arrivals.every((a) => a >= 3), 'every train keeps running: ' + arrivals + ' states ' + trains.map((t) => t.state + '/' + t.blocked));
+});
+
+test('chain signals keep a level crossing moving without collisions', () => {
+  const g = newGame();
+  // Two loops that cross each other twice: A (wide) and B (tall).
+  const A = rect(60, 80, 140, 100), B = rect(90, 60, 110, 120);
+  const special = {};
+  const crossings = [[90, 80], [110, 80], [90, 100], [110, 100]];
+  const isCross = (x, y) => crossings.some(([a, b]) => a === x && b === y);
+  // Chain signals 2 tiles before each crossing, rail signals 2 tiles after (in loop order).
+  for (const loop of [A, B]) {
+    loop.forEach(([x, y], i) => {
+      if (isCross(x, y)) {
+        const [bx, by] = loop[(i - 2 + loop.length) % loop.length];
+        const [ax, ay] = loop[(i + 2) % loop.length];
+        special[bx + ',' + by] = 'chain_signal';
+        special[ax + ',' + ay] = 'rail_signal';
+      }
+    });
+  }
+  // Signals around the rest of each loop.
+  for (const loop of [A, B]) loop.forEach(([x, y], i) => { if (i % 15 === 7 && !special[x + ',' + y] && !isCross(x, y)) special[x + ',' + y] = 'rail_signal'; });
+  special['70,80'] = 'train_stop'; special['130,100'] = 'train_stop';
+  special['100,60'] = 'train_stop'; special['100,120'] = 'train_stop';
+  lay(g, A, special); FG.trains.connect(g, FG.trains.railAt(g, 60, 81), FG.trains.railAt(g, 60, 80));
+  lay(g, B, special); FG.trains.connect(g, FG.trains.railAt(g, 90, 61), FG.trains.railAt(g, 90, 60));
+  FG.trains.railAt(g, 70, 80).name = 'A1'; FG.trains.railAt(g, 130, 100).name = 'A2';
+  FG.trains.railAt(g, 100, 60).name = 'B1'; FG.trains.railAt(g, 100, 120).name = 'B2';
+  const trains = [];
+  const add = (x, y, dir, s1, s2) => {
+    const r = FG.trains.placeCar(g, 'loco', x, y, dir);
+    assert(r.ok, 'place ' + x + ',' + y + ' ' + r.reason);
+    FG.trains.placeCar(g, 'wagon', x - FG.DX[dir] * 3, y - FG.DY[dir] * 3, dir);
+    fuel(r.train);
+    r.train.schedule = [{ station: s1, cond: 'time', v: 1 }, { station: s2, cond: 'time', v: 1 }];
+    r.train.mode = 'auto';
+    trains.push(r.train);
+  };
+  add(78, 80, 1, 'A2', 'A1'); add(125, 100, 3, 'A1', 'A2');
+  add(110, 70, 2, 'B2', 'B1'); add(90, 112, 0, 'B1', 'B2');
+  let ok = true;
+  for (let t = 0; t < 60 * 120; t++) {
+    g.step();
+    if (t % 4 === 0 && !noOverlap(g)) { ok = false; break; }
+    const bad = allIntact(g);
+    if (bad) throw new Error('at tick ' + t + ' ' + bad);
+  }
+  assert(ok, 'trains overlapped');
+  const arr = trains.map((t) => t.arrivals);
+  assert(arr.every((a) => a >= 3), 'all trains keep moving: ' + arr + ' states ' + trains.map((t) => t.state + '/' + t.blocked + '/' + t.speed.toFixed(2)));
+});
+
+test('trains meeting head-on stop instead of colliding', () => {
+  const g = newGame();
+  lay(g, line(60, 80, 120, 80), { '61,80': 'train_stop', '119,80': 'train_stop' });
+  FG.trains.railAt(g, 61, 80).name = 'W';
+  FG.trains.railAt(g, 119, 80).name = 'E';
+  const a = FG.trains.placeCar(g, 'loco', 70, 80, 1).train;
+  const b = FG.trains.placeCar(g, 'loco', 110, 80, 3).train;
+  fuel(a); fuel(b);
+  a.schedule = [{ station: 'E', cond: 'time', v: 1 }]; a.mode = 'auto';
+  b.schedule = [{ station: 'W', cond: 'time', v: 1 }]; b.mode = 'auto';
+  let ok = true;
+  for (let t = 0; t < 60 * 20; t++) { g.step(); if (!noOverlap(g)) { ok = false; break; } }
+  assert(ok, 'no collision');
+  assert(a.speed === 0 && b.speed === 0, 'both stopped: ' + a.speed + ',' + b.speed);
+});
+
+test('manual driving follows the steer at a junction', () => {
+  const g = newGame();
+  lay(g, line(60, 80, 90, 80));
+  lay(g, line(75, 80, 75, 60));
+  const tr = FG.trains.placeCar(g, 'loco', 64, 80, 1).train;
+  fuel(tr);
+  tr.mode = 'manual';
+  tr.ctrl = { throttle: 1, steer: -1 };
+  FG.trains.placeCar(g, 'wagon', 61, 80, 1);
+  let turned = false;
+  for (let t = 0; t < 60 * 10; t++) {
+    g.step();
+    const p = FG.trains.pointAt(tr, tr.headS); if (p[1] < 76) turned = true;
+    const bad = allIntact(g);
+    if (bad) throw new Error('at tick ' + t + ' ' + bad);
+  }
+  assert(turned, 'train turned north at the junction: head ' + FG.trains.pointAt(tr, tr.headS));
+});
+
+test('removing a middle car splits the train', () => {
+  const g = newGame();
+  lay(g, line(60, 80, 100, 80));
+  const tr = FG.trains.placeCar(g, 'loco', 80, 80, 1).train;
+  FG.trains.placeCar(g, 'wagon', 77, 80, 1);
+  FG.trains.placeCar(g, 'wagon', 74, 80, 1);
+  FG.trains.placeCar(g, 'loco', 71, 80, 1);
+  assert(tr.cars.length === 4, 'four cars ' + tr.cars.length);
+  FG.trains.removeCar(g, tr, 1);
+  assert(g.rail.trains.length === 2, 'split into two trains');
+  const [a, b] = g.rail.trains;
+  assert(a.cars.length === 1 && b.cars.length === 2, 'sizes ' + a.cars.length + '/' + b.cars.length);
+  run(g, 5);
+  assert(noOverlap(g), 'no overlap after split');
+});
+
+test('picking up track under a train is refused; removing it ahead reroutes', () => {
+  const g = newGame();
+  lay(g, line(60, 80, 100, 80));
+  const tr = FG.trains.placeCar(g, 'loco', 70, 80, 1).train;
+  run(g, 2);
+  assert(!g.pickUpEntity(FG.trains.railAt(g, 70, 80)), 'refused under train');
+  assert(g.pickUpEntity(FG.trains.railAt(g, 90, 80)), 'removed ahead');
+  run(g, 2);
+  assert(g.rail.trains.length === 1 && !tr.dead, 'train still there');
+});
+
 if (FG.save) {
   test('save and load round-trip preserves the factory', () => {
     const g = newGame();
@@ -376,6 +622,14 @@ if (FG.save) {
     const belt = place(g, 'belt', 110, 115, E);
     run(g, 1);
     FG.belts.laneInsert(belt.lanes[0], 'coal', 0.5, 1);
+    lay(g, line(120, 120, 150, 120), { '140,120': 'train_stop' });
+    FG.trains.railAt(g, 140, 120).name = 'Depot';
+    const loco = FG.trains.placeCar(g, 'loco', 124, 120, 1).train;
+    fuel(loco);
+    loco.schedule = [{ station: 'Depot', cond: 'time', v: 30 }];
+    loco.mode = 'auto';
+    run(g, 40);
+    const midX = FG.trains.pointAt(loco, loco.headS)[0];
     const plates = asm.inp.iron_plate;
     const json = FG.save.serialize(g);
     const g2 = FG.save.deserialize(json);
@@ -385,6 +639,11 @@ if (FG.save) {
     const a2 = FG.entAt(g2, 110, 110);
     assert(a2.out && a2.out.iron_gear === 7 && a2.inp.iron_plate === plates && a2.crafting === asm.crafting && a2.recipe === 'iron_gear', 'assembler contents preserved ' + JSON.stringify([a2.out, a2.inp]));
     assert(FG.entAt(g2, 110, 115).lanes[0].ids[0] === 'coal', 'belt items preserved');
+    assert(g2.rail.trains.length === 1 && FG.trains.railAt(g2, 140, 120).name === 'Depot', 'train and stop preserved');
+    const t2 = g2.rail.trains[0];
+    assert(Math.abs(FG.trains.pointAt(t2, t2.headS)[0] - midX) < 0.5, 'train position preserved');
+    run(g2, 60 * 10);
+    assert(t2.state === 'station' && Math.abs(FG.trains.pointAt(t2, t2.headS)[0] - 141) < 0.6, 'loaded train reaches its stop: ' + t2.state + ' ' + FG.trains.pointAt(t2, t2.headS));
     const before = f.out ? f.out.n : 0;
     run(g2, 900);
     const f2 = FG.entAt(g2, 102, 100);
