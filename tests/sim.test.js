@@ -805,6 +805,25 @@ test('picking up track under a train is refused; removing it ahead reroutes', ()
   assert(g.pickUpRail(c) && g.player.inv.count('rail') === 5, 'curve refunds 4');
 });
 
+if (FG.demoFactory) {
+  test('the demo factory builds cleanly and every part of it runs', () => {
+    const g = FG.demoFactory();
+    assert(!g.demo.failed.length, 'everything placed: ' + g.demo.failed.join('; '));
+    const t0 = Object.assign({}, g.stats.total.p);
+    const r0 = g.research.progress.fast_inserter || 0;
+    run(g, 60 * 150);
+    const made = (id) => (g.stats.total.p[id] || 0) - (t0[id] || 0);
+    assert(made('iron_ore') > 200 && made('iron_plate') > 200, 'iron mined and smelted: ' + made('iron_ore') + ' / ' + made('iron_plate'));
+    assert(made('copper_plate') > 30, 'copper arrives by train and is smelted: ' + made('copper_plate'));
+    assert(made('sci_1') >= 12 && made('iron_gear') > 10, 'science packs made: ' + made('sci_1'));
+    assert(made('coal') > 10, 'coal outpost mines: ' + made('coal'));
+    assert((g.research.progress.fast_inserter || 0) > r0 || g.research.done.fast_inserter, 'labs research');
+    assert(g.byKind.boiler.every((b) => b.status === 'working') && g.byKind.engine.some((e) => e.out > 0), 'steam power runs');
+    assert(g.demo.train.arrivals >= 3, 'the copper train runs: ' + g.demo.train.arrivals + ' ' + g.demo.train.state);
+    assert(!g.byKind.inserter.some((e) => e.status === 'no_power') && !g.byKind.drill.some((e) => e.status === 'no_power'), 'everything is powered');
+  });
+}
+
 if (FG.save) {
   test('save and load round-trip preserves the factory', () => {
     const g = newGame();

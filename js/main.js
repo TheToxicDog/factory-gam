@@ -74,7 +74,8 @@
 
   // Keep the running game safe before replacing it.
   function autosaveCurrent() {
-    if (app.game && !app.titleShown && app.game.tick > 60) FG.save.store(app.game, 'auto').catch(() => {});
+    if (app.game && !app.titleShown && app.game.tick > 60) return FG.save.store(app.game, 'auto').catch(() => {});
+    return null;
   }
 
   app.newGame = function (opts) {
@@ -84,13 +85,22 @@
     app.ui.toast('Landed. Follow the objectives at the top left.', 'good');
   };
 
-  app.showTitle = function () {
+  // A ready-made mid-game base to explore (see demo.js).
+  app.startDemo = function () {
     autosaveCurrent();
+    app.startGame(FG.demoFactory());
+    app.ui.toast('Demo factory: steam power by the lake, iron miners feeding a smelter column, science, and a copper railway to the south', 'good');
+  };
+
+  app.showTitle = function () {
+    const saving = autosaveCurrent();
     app.titleShown = true;
     app.game = null;
     document.getElementById('hud').hidden = true;
     document.getElementById('title').hidden = false;
     buildTitleMenu();
+    // The autosave finishes in the background; offer Continue once it has.
+    if (saving) saving.then(() => { if (app.titleShown) buildTitleMenu(); });
     if (!app.demo) {
       try { app.demo = makeDemo(); } catch (e) { console.error('demo scene failed', e); app.demo = null; }
     }
@@ -106,6 +116,7 @@
       try { app.startGame(await FG.save.loadSlot('auto')); } catch (e) { app.ui.toast('Could not load the autosave: ' + e.message, 'bad'); }
     } }));
     menu.appendChild(h('button', { class: 'btn' + (hasAuto ? '' : ' primary'), text: 'New game', onclick: () => app.ui.open('newgame') }));
+    menu.appendChild(h('button', { class: 'btn', text: 'Demo factory', title: 'A ready-made base with steam power, miners, belts, smelting, science and a railway', onclick: () => app.startDemo() }));
     if (hasAny) menu.appendChild(h('button', { class: 'btn', text: 'Load game', onclick: () => app.ui.open('saves', 'load') }));
     menu.appendChild(h('button', { class: 'btn', text: 'Import save code', onclick: () => app.ui.open('savecode') }));
     menu.appendChild(h('button', { class: 'btn', text: 'Controls', onclick: () => app.ui.open('help') }));

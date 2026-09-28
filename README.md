@@ -12,6 +12,17 @@ It uses no frameworks, has no build step and needs no assets. All art is drawn p
 
 A keyboard and mouse are required.
 
+**Demo factory:** the title screen's *Demo factory* button starts a ready-made mid-game base on seed 2024, built on the map's real terrain. It has:
+
+- steam power by the lake;
+- a burner miner feeding a stone furnace;
+- a self-fuelling burner-drill coal outpost;
+- eight electric miners feeding a belt into an eight-furnace smelting column;
+- assemblers making gears and Mechanics packs for two labs;
+- a copper railway whose drills load the wagon and whose arms unload it into furnaces.
+
+It's a normal game from there: explore it, open every machine, or keep building.
+
 ## Controls
 
 | Action | Input |
@@ -84,6 +95,7 @@ js/rails.js       rail geometry (2-tile grid, curves), track network, planner, s
 js/trains.js      trains: cars, reservations, signals, pathfinding, schedules, driving
 js/sim.js         game state, research, hand crafting, player, drones, fixed-rate tick
 js/save.js        save / load / save codes
+js/demo.js        the Demo factory scenario
 js/sprites.js     procedural building art (cached per direction)
 js/icons.js       procedural item icons
 js/render.js      world renderer (terrain chunk cache, belts, entities, lighting, overlays)
@@ -103,7 +115,7 @@ node tests/sim.test.js   # data integrity + simulation behaviour (belts, power, 
 node tests/perf.js       # ~14,000-entity factory: ms per tick and topology rebuild cost
 ```
 
-The browser scripts (`tests/smoke.cjs`, `tests/play.cjs`, `tests/trains.cjs`, `tests/showcase.cjs` and others) drive the real page with Playwright. They mine, build, fuel, drag belts, configure assemblers, save and load, and take screenshots.
+The browser scripts (`tests/smoke.cjs`, `tests/play.cjs`, `tests/trains.cjs`, `tests/tour.cjs`, `tests/showcase.cjs` and others) drive the real page with Playwright. `tests/tour.cjs` walks through the Demo factory with real clicks and takes about 40 screenshots of the buildings and every window. They mine, build, fuel, drag belts, configure assemblers, save and load, and take screenshots.
 
 ## Not in this version yet
 
