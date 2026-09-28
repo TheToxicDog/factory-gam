@@ -203,6 +203,14 @@
 
   FG.on('picked', (id, n, x, y) => { if (app.game) app.game.effects.push({ type: 'pick', id, x, y, t: 0, life: 40 }); });
 
+  // Sound effects (only for the live game, never the title-screen demo).
+  const live = () => app.game && !app.titleShown;
+  FG.on('sound', (name, x, y) => { if (live()) FG.sfx.play(name, x, y); });
+  FG.on('placed', (e) => { if (live()) FG.sfx.play('place', e.x, e.y); });
+  FG.on('research', (tid) => { if (tid && live()) FG.sfx.play('research'); });
+  FG.on('objective', () => { if (live()) FG.sfx.play('objective'); });
+  FG.on('alert', () => { if (live()) FG.sfx.play('alert'); });
+
   // Save before the tab closes (uncompressed is too slow to be safe; use the fast path).
   document.addEventListener('visibilitychange', () => {
     if (document.hidden && app.game && !app.titleShown) FG.save.store(app.game, 'auto').catch(() => {});

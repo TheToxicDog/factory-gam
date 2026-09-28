@@ -315,6 +315,7 @@
         }
         for (const i in r.ing) this.stats.consume(i, r.ing[i]);
         p.craftProg = 0;
+        FG.emit('sound', 'craft');
         q.n--;
         q.started = false;
         if (q.n <= 0) p.queue.shift();
@@ -410,6 +411,7 @@
       w.modified.add(i);
       if (w.amt[i] <= 0) { w.res[i] = 0; w.amt[i] = 0; w.touchChunk(x, y); }
       FG.emit('picked', id, n, x + 0.5, y + 0.5);
+      FG.emit('sound', r === FG.RES.TREE ? 'chop' : 'mine');
       FG.emit('inventory');
     }
     pickUpEntity(e) {
@@ -419,6 +421,7 @@
       FG.removeEntity(this, e);
       for (const [id, n] of items) this.player.inv.add(id, n);
       if (items.length) FG.emit('picked', items[0][0], items[0][1], e.x + e.w / 2, e.y + e.h / 2);
+      FG.emit('sound', 'pickup');
       FG.emit('inventory');
       return true;
     }

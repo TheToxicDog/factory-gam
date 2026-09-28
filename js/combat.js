@@ -25,12 +25,14 @@
     if (!e || e.dead) return;
     e.hp -= dmg;
     e.lastHit = g.tick;
+    FG.emit('sound', 'hit', e.x, e.y);
     if (g.tick - (g.lastAttackAlert || -9999) > 600) {
       g.lastAttackAlert = g.tick;
       FG.emit('alert', { text: D.items[D.protos[e.p].item].name + ' is under attack', x: e.x, y: e.y, kind: 'attack' });
     }
     if (e.hp <= 0) {
       g.effects.push({ type: 'boom', x: e.x + e.w / 2, y: e.y + e.h / 2, r: Math.max(e.w, e.h), t: 0, life: 30 });
+      FG.emit('sound', 'boom', e.x, e.y);
       FG.removeEntity(g, e);
       g.lostBuildings = (g.lostBuildings || 0) + 1;
     }
@@ -310,6 +312,7 @@
         this.evo += (1 - this.evo) * 0.002;
         this.g.stats.nestsKilled = (this.g.stats.nestsKilled || 0) + 1;
         this.g.effects.push({ type: 'boom', x: n.x + 1, y: n.y + 1, r: 2, t: 0, life: 40 });
+        FG.emit('sound', 'boom', n.x + 1, n.y + 1);
         this.g.effects.push({ type: 'splat', x: n.x + 1, y: n.y + 1, color: '#6a3a5a', r: 1.6, t: 0, life: 1800 });
       }
     }
@@ -452,6 +455,7 @@
           const dmg = (e.ammoDmg || 5) * (1 + g.bonus.bulletDmg);
           if (t.unit) this.damageUnit(t.unit, dmg, e); else this.damageNest(t.nest, dmg, e);
           g.effects.push({ type: 'tracer', x0: cx + Math.cos(e.angle) * 0.9, y0: cy + Math.sin(e.angle) * 0.9, x1: tx, y1: ty, t: 0, life: 4, color: '#ffd27a' });
+          FG.emit('sound', 'shot', cx, cy);
         }
       }
       for (const e of g.byKind.laser || []) {
@@ -477,6 +481,7 @@
           const dmg = pr.dmg * (1 + g.bonus.laserDmg);
           if (t.unit) this.damageUnit(t.unit, dmg, e); else this.damageNest(t.nest, dmg, e);
           g.effects.push({ type: 'tracer', x0: cx, y0: cy - 0.4, x1: tx, y1: ty, t: 0, life: 8, color: '#ff4a5a', width: 3 });
+          FG.emit('sound', 'laser', cx, cy);
         }
       }
     }
@@ -514,6 +519,7 @@
       if (t.unit) this.damageUnit(t.unit, dmg, 'player'); else this.damageNest(t.nest, dmg, 'player');
       p.aim = Math.atan2(ty - p.y, tx - p.x);
       g.effects.push({ type: 'tracer', x0: p.x, y0: p.y - 0.3, x1: tx, y1: ty, t: 0, life: 4, color: '#fff2b0' });
+      FG.emit('sound', 'shot');
     }
 
     throwGrenade(x, y) {
@@ -537,6 +543,7 @@
         for (const u of this.units) if (FG.dist2(u.x, u.y, s.x1, s.y1) < R * R) this.damageUnit(u, 35 * (1 + this.g.bonus.bulletDmg * 0.5), 'player');
         for (const n of this.nests.slice()) if (FG.dist2(n.x + 1, n.y + 1, s.x1, s.y1) < (R + 1) * (R + 1)) this.damageNest(n, 35, 'player');
         this.g.effects.push({ type: 'boom', x: s.x1, y: s.y1, r: R, t: 0, life: 24 });
+        FG.emit('sound', 'boom', s.x1, s.y1);
       }
     }
   }

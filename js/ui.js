@@ -423,6 +423,7 @@
 
     // ------------------------------------------------------ toasts/alerts
     toast(text, kind) {
+      if (kind === 'warn' && FG.sfx) FG.sfx.play('warn');
       const box = this.$('toasts');
       const el = h('div', { class: 'toast ' + (kind || ''), text });
       box.appendChild(el);
@@ -766,7 +767,7 @@
           put(recipeArea, picker, io, progressBar(() => ent.prog));
           if (pr.kind === 'uplink') {
             const satEl = slotEl('satellite', 0, { onDown: () => { if (ent.satellite && takeToPlayer('satellite', 1)) ent.satellite = 0; } });
-            const launch = h('button', { class: 'btn primary', text: 'Launch', onclick: () => { if (ent.stages >= pr.stages && ent.satellite && !ent.launch) { ent.launch = 1; this.close(); } } });
+            const launch = h('button', { class: 'btn primary', text: 'Launch', onclick: () => { if (ent.stages >= pr.stages && ent.satellite && !ent.launch) { ent.launch = 1; FG.sfx.play('launch'); this.close(); } } });
             const stages = h('div', { class: 'bar good progress-line' }, h('i'));
             const stTxt = h('div', { class: 'num' });
             upd(() => {
@@ -1153,6 +1154,7 @@
         b('Load game', () => this.open('saves', 'load')),
         b('Copy or import a save code', () => this.open('savecode')),
         b('Controls and tips', () => this.open('help')),
+        b(FG.sfx.enabled() ? 'Sound: on' : 'Sound: off', (ev) => { FG.sfx.setEnabled(!FG.sfx.enabled()); ev.target.textContent = FG.sfx.enabled() ? 'Sound: on' : 'Sound: off'; }),
         b('New game', () => this.open('newgame')),
         b('Quit to title', () => { this.close(); app.showTitle(); })));
       return w;
