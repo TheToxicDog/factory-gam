@@ -951,6 +951,226 @@ test('picking up track under a train is refused; removing it ahead reroutes', ()
   assert(g.pickUpRail(c) && g.player.inv.count('rail') === 5, 'curve refunds 4');
 });
 
+// ----------------------------------------------------------------- loaders
+console.log('Loaders');
+// Count items taken off the far end of a belt each tick (after a warm-up), per second.
+function drainRate(g, last, secs, warm) {
+  let out = 0;
+  for (let t = 0; t < 60 * (secs + warm); t++) {
+    g.step();
+    for (const L of [0, 1]) {
+      const ln = last.lanes[L];
+      while (ln.pos.length && ln.pos[0] >= 0.8) { ln.ids.shift(); ln.pos.shift(); if (t >= 60 * warm) out++; }
+    }
+  }
+  return out / secs;
+}
+
+test('a loader pointed at a chest loads it; pointed away it unloads (and R swaps)', () => {
+  const g = newGame();
+  const c1 = place(g, 'iron_chest', 70, 60);
+  const a = place(g, 'loader', 68, 60, E); // chest ahead: loading, belt end at the back tile
+  assert(a.lm === 'in' && a.w === 2 && a.h === 1, 'loads: ' + a.lm);
+  assert(a.node.x === 68 && a.node.y === 60 && a.node.cx === 70, 'belt end and container ' + JSON.stringify([a.node.x, a.node.y, a.node.cx, a.node.cy]));
+  const c2 = place(g, 'iron_chest', 60, 70);
+  const b = place(g, 'loader', 61, 70, E); // chest behind: unloading, belt end at the front tile
+  assert(b.lm === 'out' && b.node.x === 62 && b.node.cx === 60, 'unloads: ' + b.lm + ' ' + JSON.stringify([b.node.x, b.node.cx]));
+  const v = place(g, 'loader', 80, 58, S); // vertical, chest below
+  place(g, 'wooden_chest', 80, 60);
+  assert(v.lm === 'in' && v.w === 1 && v.h === 2 && v.node.x === 80 && v.node.y === 58 && v.node.cy === 60, 'vertical ' + JSON.stringify([v.lm, v.node.y, v.node.cy]));
+  // R turns a loader round: the hood stays by the chest and the items on it turn too.
+  run(g, 1);
+  FG.belts.laneInsert(a.lanes[0], 'coal', 0.25, 1);
+  assert(FG.rotateEntity(g, a), 'rotates');
+  assert(a.lm === 'out' && a.dir === W && a.node.x === 68 && a.node.cx === 70 && a.x === 68 && a.w === 2, 'now unloads westward from the same chest');
+  assert(a.lanes[1].ids[0] === 'coal' && Math.abs(a.lanes[1].pos[0] - 0.75) < 1e-9, 'item kept, turned round ' + JSON.stringify(a.lanes));
+  void c1; void c2;
+});
+
+test('loaders fill and empty chests at full belt speed on both lanes, every tier', () => {
+  const tiers = [['loader', 'belt', 15], ['fast_loader', 'fast_belt', 30], ['express_loader', 'express_belt', 45]];
+  for (const [ld, belt, rate] of tiers) {
+    const g = newGame();
+    // Unloading: chest -> loader -> belt.
+    const src = place(g, 'steel_chest', 60, 60);
+    src.inv.add('iron_plate', 4800);
+    const u = place(g, ld, 61, 60, E);
+    const line = [];
+    for (let x = 63; x < 75; x++) line.push(place(g, belt, x, 60, E));
+    const got = drainRate(g, line[line.length - 1], 20, 10); // a yellow belt takes 7 s to fill
+    assert(u.lm === 'out' && Math.abs(got - rate) < rate * 0.04, ld + ' unloads ' + got + '/s, expected ' + rate);
+    // Loading: chest -> loader -> belt -> loader -> chest, the belt packed by the first loader.
+    const g2 = newGame();
+    place(g2, 'steel_chest', 57, 60).inv.add('copper_plate', 4800);
+    place(g2, ld, 58, 60, E);
+    for (let x = 60; x < 72; x++) place(g2, belt, x, 60, E);
+    const l = place(g2, ld, 72, 60, E);
+    const dst = place(g2, 'steel_chest', 74, 60);
+    assert(l.lm === 'in', 'loading mode');
+    run(g2, 60 * 10);
+    const before = dst.inv.count('copper_plate');
+    run(g2, 60 * 20);
+    const inRate = (dst.inv.count('copper_plate') - before) / 20;
+    assert(Math.abs(inRate - rate) < rate * 0.04, ld + ' loads ' + inRate + '/s, expected ' + rate);
+    assert(l.status === 'working', 'status ' + l.status);
+  }
+});
+
+test('an unloading loader fills both lanes and stops when the belt backs up', () => {
+  const g = newGame();
+  const src = place(g, 'iron_chest', 60, 60);
+  src.inv.add('iron_gear', 500);
+  const u = place(g, 'loader', 61, 60, E);
+  const b = place(g, 'belt', 63, 60, E); // dead end
+  run(g, 60 * 10);
+  const onBelt = b.lanes[0].ids.length + b.lanes[1].ids.length + u.lanes[0].ids.length + u.lanes[1].ids.length;
+  assert(b.lanes[0].ids.length === 4 && b.lanes[1].ids.length === 4, 'belt full on both lanes ' + JSON.stringify(b.lanes.map((l) => l.ids.length)));
+  assert(src.inv.count('iron_gear') + onBelt === 500, 'nothing lost: ' + src.inv.count('iron_gear') + ' + ' + onBelt);
+  assert(u.status === 'output_full', 'status ' + u.status);
+  // Emptied: waiting for items.
+  const g2 = newGame();
+  place(g2, 'iron_chest', 60, 60);
+  const u2 = place(g2, 'loader', 61, 60, E);
+  run(g2, 5);
+  assert(u2.status === 'waiting', 'empty chest status ' + u2.status);
+  const lone = place(g2, 'loader', 70, 70, E);
+  run(g2, 2);
+  assert(lone.status === 'no_target', 'no container ' + lone.status);
+});
+
+test('loaders feed and empty a furnace with arm-sized helpings, and filter what they unload', () => {
+  const g = newGame();
+  // belt -> loader -> furnace -> loader -> belt -> loader -> chest
+  const feed = [];
+  for (let x = 50; x < 58; x++) feed.push(place(g, 'belt', x, 60, E));
+  place(g, 'loader', 58, 60, E);
+  const f = place(g, 'stone_furnace', 60, 60);
+  FG.insertItem(g, f, 'coal', 50, 'direct');
+  const out = place(g, 'loader', 62, 60, E);
+  for (let x = 64; x < 70; x++) place(g, 'belt', x, 60, E);
+  place(g, 'loader', 70, 60, E);
+  const dst = place(g, 'iron_chest', 72, 60);
+  assert(out.lm === 'out', 'furnace unloader');
+  run(g, 1);
+  let most = 0;
+  for (let t = 0; t < 60 * 60; t++) {
+    if (t % 30 === 0) FG.belts.laneInsert(feed[0].lanes[0], 'iron_ore', 0.125, 1);
+    g.step();
+    most = Math.max(most, f.inp ? f.inp.n : 0);
+  }
+  assert(most <= 2, 'furnace never holds more than an arm would give it: ' + most);
+  assert(dst.inv.count('iron_plate') >= 15, 'plates reach the chest: ' + dst.inv.count('iron_plate'));
+  // Filter: only copper leaves a mixed chest.
+  const g2 = newGame();
+  const mix = place(g2, 'iron_chest', 60, 60);
+  mix.inv.add('iron_plate', 40); mix.inv.add('copper_plate', 40);
+  const u = place(g2, 'loader', 61, 60, E);
+  g2.applySettings(u, { filter: 'copper_plate' });
+  const b = place(g2, 'belt', 63, 60, E);
+  run(g2, 60 * 4);
+  const ids = b.lanes[0].ids.concat(b.lanes[1].ids, u.lanes[0].ids, u.lanes[1].ids);
+  assert(ids.length > 4 && ids.every((id) => id === 'copper_plate') && mix.inv.count('iron_plate') === 40, 'filtered ' + JSON.stringify(ids));
+});
+
+test('a loader side-feeds a belt and a belt corner feeds a loader', () => {
+  const g = newGame();
+  const src = place(g, 'iron_chest', 60, 60);
+  src.inv.add('stone', 200);
+  place(g, 'loader', 61, 60, E); // belt end at 62,60
+  const main = [];
+  for (let y = 55; y < 66; y++) main.push(place(g, 'belt', 63, y, S)); // runs south past the loader
+  run(g, 60 * 3);
+  const L = main[main.length - 1].lanes;
+  // Items side-loaded from the west land on the belt's west lane: lane 1 (right) heading south.
+  assert(L[1].ids.length > 0 && L[0].ids.length === 0, 'side-load onto one lane ' + JSON.stringify(L.map((l) => l.ids.length)));
+  // Corner: belt heading east turns south into a loader above a chest.
+  const g2 = newGame();
+  const line = [];
+  for (let x = 60; x < 66; x++) line.push(place(g2, 'belt', x, 60, E));
+  const corner = place(g2, 'belt', 66, 60, S);
+  const l = place(g2, 'loader', 66, 61, S);
+  const dst = place(g2, 'wooden_chest', 66, 63);
+  assert(l.lm === 'in', 'loads the chest below');
+  run(g2, 1);
+  assert(corner.curveIn, 'the last belt turns');
+  let sent = 0;
+  for (let t = 0; t < 60 * 10; t++) { if (t % 10 === 0 && FG.belts.laneInsert(line[0].lanes[(t / 10) % 2], 'coal', 0.125, 1)) sent++; g2.step(); }
+  run(g2, 60 * 8);
+  assert(sent === 60 && dst.inv.count('coal') === sent, 'all the coal went round the corner into the chest: ' + dst.inv.count('coal') + ' of ' + sent);
+});
+
+test('loaders load and unload a stopped wagon', () => {
+  const g = newGame();
+  track(g, 40, 80, 2, S_(40));
+  side(g, 'train_stop', 60, 80, 6, 'Load');
+  side(g, 'train_stop', 116, 80, 2, 'Drop');
+  const tr = TR.placeCar(g, 'loco', 100, 80, E).train;
+  TR.placeCar(g, 'wagon', 93, 80, E);
+  assert(TR.placeCar(g, 'loco', 86, 80, W).ok, 'rear loco');
+  fuel(tr);
+  // At Load the wagon covers x 67..73 on rows 79..80: chest -> unloading loader -> loading
+  // loader -> wagon, straight down.
+  const src = place(g, 'steel_chest', 70, 74);
+  src.inv.add('iron_plate', 2000);
+  const un = place(g, 'loader', 70, 75, S);
+  const ld = place(g, 'loader', 70, 77, S);
+  assert(un.lm === 'out' && ld.lm === 'in', 'modes guessed: ' + un.lm + ' ' + ld.lm);
+  // At Drop (wagon over x 103..109): wagon -> unloading loader -> loading loader -> chest.
+  const out = place(g, 'loader', 106, 81, S);
+  g.applySettings(out, { lm: 'out' }); // no wagon there yet to guess from
+  place(g, 'loader', 106, 83, S);
+  const dst = place(g, 'steel_chest', 106, 85);
+  tr.schedule = [{ station: 'Load', cond: 'time', v: 8 }, { station: 'Drop', cond: 'empty' }];
+  tr.mode = 'auto';
+  run(g, 60 * 60);
+  const got = dst.inv.count('iron_plate');
+  assert(got >= 100, 'plates delivered by loaders: ' + got + ' state ' + tr.state + ' cargo ' + JSON.stringify(TR.cargoTotals(tr)) + ' loaders ' + [un.status, ld.status, out.status].join(','));
+  assert(tr.arrivals >= 2, 'arrivals ' + tr.arrivals);
+});
+
+test('loaders survive fast replace, save and load, and pick up with their items', () => {
+  const g = newGame();
+  const src = place(g, 'iron_chest', 60, 60);
+  src.inv.add('iron_plate', 100);
+  const u = place(g, 'loader', 61, 60, E);
+  g.applySettings(u, { filter: 'iron_plate' });
+  place(g, 'belt', 63, 60, E);
+  run(g, 60);
+  const onIt = u.lanes[0].ids.length + u.lanes[1].ids.length;
+  assert(onIt > 0, 'items on the loader');
+  const chk = FG.canPlace(g, 'fast_loader', 61, 60, E);
+  assert(chk.ok && chk.replace === u, 'fast loader replaces it');
+  const res = FG.replaceEntity(g, u, 'fast_loader', E);
+  const f = res.ent;
+  assert(f.lm === 'out' && f.filter === 'iron_plate' && f.lanes[0].ids.length + f.lanes[1].ids.length === onIt && f.node.lanes === f.lanes, 'mode, filter and items kept');
+  run(g, 30);
+  const g2 = FG.save.deserialize(FG.save.serialize(g));
+  const f2 = FG.entAt(g2, 62, 60);
+  assert(f2 && f2.p === 'fast_loader' && f2.lm === 'out' && f2.filter === 'iron_plate' && f2.node && f2.node.x === 62 && f2.node.cx === 60, 'loader restored');
+  assert(JSON.stringify(f2.lanes) === JSON.stringify(g.ents.get(f.id).lanes), 'lane items restored');
+  run(g2, 60);
+  assert(f2.status === 'output_full' || f2.status === 'working', 'still unloading after load: ' + f2.status);
+  // Picking it up returns the loader and what is on it.
+  const g3 = newGame();
+  const l3 = place(g3, 'loader', 61, 60, E);
+  run(g3, 1);
+  FG.belts.laneInsert(l3.lanes[0], 'coal', 0.5, 1);
+  const items = FG.entityContents(g3, l3);
+  assert(JSON.stringify(items) === JSON.stringify([['loader', 1], ['coal', 1]]), 'contents ' + JSON.stringify(items));
+});
+
+test('a drill drops ore onto a loader belt end, which carries it into a chest', () => {
+  const g = newGame();
+  ore(g, 'IRON', 60, 62, 2, 2);
+  const d = place(g, 'burner_drill', 60, 62, N); // drops at 60,61
+  FG.insertItem(g, d, 'coal', 20, 'direct');
+  const dst = place(g, 'wooden_chest', 62, 61);
+  const l = place(g, 'loader', 60, 61, E);
+  assert(l.lm === 'in' && l.node.x === 60 && l.node.y === 61, 'belt end under the drill output');
+  run(g, 60 * 30);
+  assert(dst.inv.count('iron_ore') >= 5, 'ore in the chest: ' + dst.inv.count('iron_ore') + ' drill ' + d.status);
+});
+
 if (FG.demoFactory) {
   test('the demo factory builds cleanly and every part of it runs', () => {
     const g = FG.demoFactory();
@@ -967,6 +1187,8 @@ if (FG.demoFactory) {
     assert(g.byKind.boiler.every((b) => b.status === 'working') && g.byKind.engine.some((e) => e.out > 0), 'steam power runs');
     assert(g.demo.train.arrivals >= 3, 'the copper train runs: ' + g.demo.train.arrivals + ' ' + g.demo.train.state);
     assert(!g.byKind.inserter.some((e) => e.status === 'no_power') && !g.byKind.drill.some((e) => e.status === 'no_power'), 'everything is powered');
+    const ld = (g.byKind.loader || [])[0], chest = FG.entAt(g, 222, 163);
+    assert(ld && ld.lm === 'in' && chest.inv.count('iron_plate') > 200, 'a loader fills the plate chest: ' + (chest && chest.inv.count('iron_plate')));
   });
 }
 

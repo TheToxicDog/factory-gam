@@ -126,7 +126,7 @@
     markDirty(kind) {
       if (kind === 'fluid') { this.dirty.fluid = true; return; }
       if (kind === 'fx') { this.dirty.fx = true; return; }
-      if (kind === 'belt' || kind === 'underground' || kind === 'splitter') { this.dirty.belts = true; return; }
+      if (kind === 'belt' || kind === 'underground' || kind === 'splitter' || kind === 'loader') { this.dirty.belts = true; return; }
       if (kind === 'signal' || kind === 'trainstop') { this.rail.dirty = true; return; }
       if (DIRTY_POWER[kind]) this.dirty.power = true;
       if (DIRTY_FLUID[kind]) this.dirty.fluid = true;
@@ -538,7 +538,8 @@
       if (sr && pr.kind === 'crafter' && pr.cats.indexOf(sr.cat) >= 0 && this.recipeEnabled(s.recipe) && (pr.fb || !Object.keys(sr.fin).length)) {
         this.giveOrDrop(FG.machines.setRecipe(this, ent, s.recipe));
       }
-      if (s.filter !== undefined && (pr.filter || pr.kind === 'splitter')) ent.filter = s.filter;
+      if (s.filter !== undefined && (pr.filter || pr.kind === 'splitter' || pr.kind === 'loader')) ent.filter = s.filter;
+      if ((s.lm === 'in' || s.lm === 'out') && pr.kind === 'loader' && s.lm !== ent.lm) { ent.lm = s.lm; FG.computeLoaderNode(ent); this.markDirty('loader'); }
       if (s.prio !== undefined && pr.kind === 'splitter') ent.prio = s.prio;
       if (FG.rails.isSideKind(pr.kind)) {
         if (s.rd !== undefined) { ent.rd = s.rd; this.rail.dirty = true; }

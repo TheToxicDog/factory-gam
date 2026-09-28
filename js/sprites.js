@@ -446,6 +446,43 @@
     ctx.fillRect(T * 0.3, y + T * 0.12, T * 0.4, T * 0.07);
   }
 
+  // Loader hood over one tile of a north-facing 1x2 loader (items travel north). Loading, the
+  // hood is the top tile (the container is above it); unloading, it is the bottom tile. Its
+  // mouth always opens onto the belt end, where the two tiles meet (y = T).
+  function paintLoaderHood(ctx, T, tier, isIn) {
+    const col = BELT_COL[tier];
+    const y0 = isIn ? 0 : T;
+    ctx.save();
+    // housing, overhanging the belt end a little so items slide under it
+    const top = isIn ? y0 + T * 0.02 : y0 - T * 0.1, h = T * 1.06;
+    plate(ctx, T * 0.02, top, T * 0.96, h, T * 0.14, '#57534c');
+    // tier-coloured side cheeks
+    ctx.fillStyle = col;
+    ctx.fillRect(T * 0.07, top + T * 0.12, T * 0.1, h - T * 0.24);
+    ctx.fillRect(T * 0.83, top + T * 0.12, T * 0.1, h - T * 0.24);
+    ctx.fillStyle = shade(col, -0.45);
+    ctx.fillRect(T * 0.07, top + T * 0.12, T * 0.03, h - T * 0.24);
+    ctx.fillRect(T * 0.9, top + T * 0.12, T * 0.03, h - T * 0.24);
+    // mouth onto the belt end
+    ctx.fillStyle = '#16130f';
+    const my = isIn ? T * 0.9 : T - T * 0.06;
+    rr(ctx, T * 0.2, my, T * 0.6, T * 0.16, T * 0.04); ctx.fill();
+    // lip where it meets the container
+    ctx.fillStyle = shade('#57534c', -0.35);
+    ctx.fillRect(T * 0.16, isIn ? y0 + T * 0.05 : y0 + T * 0.87, T * 0.68, T * 0.07);
+    // chevrons: the way items travel
+    ctx.strokeStyle = col;
+    ctx.lineWidth = T * 0.09;
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    const cy = y0 + T * 0.5;
+    for (const k of [-0.13, 0.13]) {
+      ctx.beginPath();
+      ctx.moveTo(T * 0.32, cy + T * (k + 0.1)); ctx.lineTo(T * 0.5, cy + T * (k - 0.08)); ctx.lineTo(T * 0.68, cy + T * (k + 0.1));
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
   function paintSplitterBody(ctx, T, tier) {
     const col = BELT_COL[tier];
     plate(ctx, T * 0.02, T * 0.32, T * 1.96, T * 0.36, T * 0.1, col, { noShadow: true });
@@ -652,11 +689,25 @@
     return s;
   };
 
+  S.loader = function (tier, isIn, dir) {
+    const key = 'loader' + tier + ':' + isIn + ':' + dir;
+    let s = cache.get(key);
+    if (s) return s;
+    s = rotated(1, 2, dir, S.T, (ctx) => paintLoaderHood(ctx, S.T, tier, isIn));
+    cache.set(key, s);
+    return s;
+  };
+
   // Static preview used for item icons and build ghosts of belt-like things.
   S.paintPreview = function (ctx, protoId, T) {
     const pr = D.protos[protoId];
     if (pr.kind === 'belt') { paintBelt(ctx, T, pr.tier, 0, 0); return; }
     if (pr.kind === 'underground') { paintBelt(ctx, T, pr.tier, 0, 0); paintUndergroundHood(ctx, T, pr.tier, true); return; }
+    if (pr.kind === 'loader') {
+      ctx.save(); ctx.translate(0, T); paintBelt(ctx, T, pr.tier, 0, 0); ctx.restore();
+      paintLoaderHood(ctx, T, pr.tier, true);
+      return;
+    }
     if (pr.kind === 'splitter') {
       paintBelt(ctx, T, pr.tier, 0, 0);
       ctx.save(); ctx.translate(T, 0); paintBelt(ctx, T, pr.tier, 0, 0); ctx.restore();

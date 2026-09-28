@@ -89,7 +89,7 @@
   FG.Inventory = Inventory;
 
   // --------------------------------------------------------------- helpers
-  const BELT_KINDS = { belt: 1, underground: 1, splitter: 1 };
+  const BELT_KINDS = { belt: 1, underground: 1, splitter: 1, loader: 1 };
   FG.isBeltKind = (k) => !!BELT_KINDS[k];
 
   function makeLanes() { return [{ ids: [], pos: [] }, { ids: [], pos: [] }]; }
@@ -131,6 +131,31 @@
     ent.oy = ent.y + ry;
   }
 
+  // Loader: items travel in the facing direction. Loading ('in'), the belt end is the back
+  // tile and the hood the front one; unloading ('out'), the hood is at the back. The belt end
+  // is a one-tile belt node; the container sits just past the hood.
+  // Tiles of a loader at (x, y) facing dir: belt end (bx, by), hood (hx, hy), container (cx, cy).
+  FG.loaderTiles = function (x, y, dir, lm) {
+    const vertical = !(dir & 1);
+    const x2 = x + (vertical ? 0 : 1), y2 = y + (vertical ? 1 : 0);
+    const aFront = FG.DX[dir] * x + FG.DY[dir] * y > FG.DX[dir] * x2 + FG.DY[dir] * y2;
+    const fx = aFront ? x : x2, fy = aFront ? y : y2, kx = aFront ? x2 : x, ky = aFront ? y2 : y;
+    if (lm === 'out') return { bx: fx, by: fy, hx: kx, hy: ky, cx: kx - FG.DX[dir], cy: ky - FG.DY[dir] };
+    return { bx: kx, by: ky, hx: fx, hy: fy, cx: fx + FG.DX[dir], cy: fy + FG.DY[dir] };
+  };
+  function computeLoaderNode(ent) {
+    const t = FG.loaderTiles(ent.x, ent.y, ent.dir, ent.lm);
+    const n = ent.node || (ent.node = { loader: true });
+    n.owner = ent;
+    n.dir = ent.dir;
+    n.lanes = ent.lanes;
+    n.x = t.bx; n.y = t.by;
+    n.hx = t.hx; n.hy = t.hy;
+    n.cx = t.cx; n.cy = t.cy;
+    return n;
+  }
+  FG.computeLoaderNode = computeLoaderNode;
+
   // Splitter halves: half 0 is on the left relative to the travel direction.
   function computeSplitterHalves(ent) {
     const pr = D.protos[ent.p];
@@ -154,6 +179,7 @@
       case 'chest': ent.inv = new Inventory(pr.slots); break;
       case 'belt': ent.lanes = makeLanes(); break;
       case 'underground': ent.lanes = makeLanes(); ent.ug = ent.ug || 'in'; break;
+      case 'loader': ent.lanes = makeLanes(); ent.lm = ent.lm || 'in'; ent.filter = null; computeLoaderNode(ent); break;
       case 'splitter':
         ent.halves = [{ lanes: makeLanes(), part: 0 }, { lanes: makeLanes(), part: 1 }];
         ent.toggle = [0, 0];
@@ -189,6 +215,7 @@
     if (pr.fb) computeFluidConns(ent);
     if (pr.kind === 'drill') computeDrillOut(ent);
     if (pr.kind === 'splitter') computeSplitterHalves(ent);
+    if (pr.kind === 'loader') { ent.lanes = ent.lanes || makeLanes(); ent.lm = ent.lm === 'out' ? 'out' : 'in'; computeLoaderNode(ent); }
   };
 
   // Registry bookkeeping shared by placement and loading.
@@ -224,7 +251,7 @@
   }
 
   // ----------------------------------------------------------- placement
-  const REPLACE_GROUPS = { belt: 'belt', underground: 'underground', splitter: 'splitter', inserter: 'inserter', chest: 'chest', pole: 'pole', signal: 'signal' };
+  const REPLACE_GROUPS = { belt: 'belt', underground: 'underground', splitter: 'splitter', loader: 'loader', inserter: 'inserter', chest: 'chest', pole: 'pole', signal: 'signal' };
   function replaceGroup(pr) {
     if (REPLACE_GROUPS[pr.kind]) return REPLACE_GROUPS[pr.kind];
     if (pr.kind === 'crafter' && pr.cats.indexOf('crafting') >= 0) return 'assembler';
@@ -294,8 +321,10 @@
     const [w, h] = FG.footprint(pr, dir);
     const ent = { id: g.nextId++, p: protoId, x, y, dir, w, h };
     if (extra && extra.ug) ent.ug = extra.ug;
+    if (extra && extra.lm) ent.lm = extra.lm;
     initKind(g, ent);
     if (pr.kind === 'underground' && !(extra && extra.ug)) ent.ug = FG.belts.guessUndergroundType(g, ent);
+    if (pr.kind === 'loader' && !(extra && extra.lm)) { ent.lm = FG.belts.guessLoaderMode(g, x, y, dir); computeLoaderNode(ent); }
     FG.registerEntity(g, ent);
     if (g.ghostAt) g.removeGhostsIn(x, y, w, h);
     FG.emit('placed', ent);
@@ -339,11 +368,16 @@
     const op = D.protos[old.p];
     const leftovers = [];
     const keep = {};
-    for (const k of ['inv', 'recipe', 'inp', 'out', 'fuel', 'energy', 'filter', 'modules', 'lanes', 'halves', 'toggle', 'prio', 'hand', 'st', 't', 'ug', 'prog', 'crafting', 'bonus', 'rd', 'name']) {
+    for (const k of ['inv', 'recipe', 'inp', 'out', 'fuel', 'energy', 'filter', 'modules', 'lanes', 'halves', 'toggle', 'prio', 'hand', 'st', 't', 'ug', 'lm', 'prog', 'crafting', 'bonus', 'rd', 'name']) {
       if (old[k] !== undefined) keep[k] = old[k];
     }
+    if (op.kind === 'loader' && dir !== old.dir) {
+      // Turned round: the belt end may move, so its items come back and the mode is re-guessed.
+      for (const l of old.lanes) for (const id of l.ids) leftovers.push([id, 1]);
+      delete keep.lanes; delete keep.lm;
+    }
     unregister(g, old);
-    const ent = FG.placeEntity(g, protoId, old.x, old.y, dir, { ug: keep.ug });
+    const ent = FG.placeEntity(g, protoId, old.x, old.y, dir, { ug: keep.ug, lm: keep.lm });
     if (pr.kind === op.kind) {
       for (const k in keep) if (ent[k] !== undefined) ent[k] = keep[k];
       if (ent.inv && pr.slots !== op.slots) for (const x of ent.inv.resize(pr.slots)) leftovers.push(x);
@@ -354,6 +388,7 @@
         ent.modules = m;
       }
       if (pr.kind === 'splitter') computeSplitterHalves(ent);
+      if (pr.kind === 'loader') computeLoaderNode(ent);
       if (ent.hp !== undefined) ent.hp = Math.min(pr.hp, ent.hp);
     } else {
       for (const x of FG.entityContents(g, old, false)) leftovers.push(x);
@@ -371,6 +406,18 @@
       ent.dir = FG.opposite(ent.dir);
       ent.lanes = makeLanes();
       g.markDirty('underground');
+      return true;
+    }
+    if (pr.kind === 'loader') {
+      // Like Factorio: R swaps loading and unloading. The hood stays put and the items on
+      // the belt end turn round with it.
+      ent.lm = ent.lm === 'in' ? 'out' : 'in';
+      ent.dir = FG.opposite(ent.dir);
+      const flip = (l) => ({ ids: l.ids.slice().reverse(), pos: l.pos.map((p) => 1 - p).reverse() });
+      const l0 = flip(ent.lanes[1]), l1 = flip(ent.lanes[0]);
+      ent.lanes[0] = l0; ent.lanes[1] = l1;
+      computeLoaderNode(ent);
+      g.markDirty('loader');
       return true;
     }
     if (pr.w !== pr.h) return false;

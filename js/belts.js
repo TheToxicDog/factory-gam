@@ -15,11 +15,13 @@
     const k = D.protos[e.p].kind;
     if (k === 'belt' || k === 'underground') return e;
     if (k === 'splitter') return e.halves[0].x === x && e.halves[0].y === y ? e.halves[0] : e.halves[1];
+    if (k === 'loader') return e.node.x === x && e.node.y === y ? e.node : null; // the hood tile is not a belt
     return null;
   }
   belts.nodeAt = nodeAt;
 
   function kindOf(node) {
+    if (node.loader) return 'loader';
     if (node.halves === undefined && node.part !== undefined) return 'split';
     const k = D.protos[node.p].kind;
     if (k === 'underground') return node.ug === 'in' ? 'ug_in' : 'ug_out';
@@ -30,7 +32,7 @@
   // Does this node push items out of its front edge onto the next tile?
   function outputsByTile(node) {
     const k = kindOf(node);
-    return k === 'belt' || k === 'ug_out' || k === 'split';
+    return k === 'belt' || k === 'ug_out' || k === 'split' || (k === 'loader' && node.owner.lm === 'out');
   }
 
   belts.guessUndergroundType = function (g, ent) {
@@ -45,8 +47,29 @@
     return 'in';
   };
 
+  // Loader mode for a loader placed at (x, y) facing dir (the way items travel): load into a
+  // container ahead, unload one behind; failing that, follow a belt feeding in or leading away.
+  const STORE_KINDS = { chest: 1, furnace: 1, crafter: 1, uplink: 1, lab: 1, boiler: 1, turret: 1, drill: 1 };
+  function isStore(g, x, y) {
+    if (FG.trains.carAtTile(g, x, y)) return true;
+    const e = FG.entAt(g, x, y);
+    return !!e && !!STORE_KINDS[D.protos[e.p].kind];
+  }
+  belts.isStore = isStore;
+  belts.guessLoaderMode = function (g, x, y, dir) {
+    const tIn = FG.loaderTiles(x, y, dir, 'in'), tOut = FG.loaderTiles(x, y, dir, 'out');
+    const ahead = [tIn.cx, tIn.cy], behind = [tOut.cx, tOut.cy];
+    if (isStore(g, ahead[0], ahead[1])) return 'in';
+    if (isStore(g, behind[0], behind[1])) return 'out';
+    const nb = nodeAt(g, behind[0], behind[1]);
+    if (nb && nb.dir === dir && (!nb.loader || nb.owner.lm === 'out')) return 'in';
+    const na = nodeAt(g, ahead[0], ahead[1]);
+    if (na && na.dir === dir && (!na.loader || na.owner.lm === 'in')) return 'out';
+    return 'in';
+  };
+
   function nodeSpeed(node) {
-    const ent = node.part !== undefined ? node.owner : node;
+    const ent = node.owner || node;
     return D.protos[ent.p].speed / FG.TICKS;
   }
 
@@ -59,6 +82,7 @@
       e.halves[0].owner = e; e.halves[1].owner = e;
       nodes.push(e.halves[0], e.halves[1]);
     }
+    for (const e of g.byKind.loader || []) nodes.push(FG.computeLoaderNode(e));
     for (const n of nodes) {
       n.len = 1;
       n.speed = nodeSpeed(n);
@@ -100,6 +124,7 @@
       const k = kindOf(n);
       if (k === 'ug_in') { n.tgt = n.pair ? { node: n.pair, mode: 'cont' } : { mode: 'none' }; continue; }
       if (k === 'split') continue; // splitters resolve outputs per half below
+      if (k === 'loader' && n.owner.lm !== 'out') { n.tgt = { mode: 'none' }; continue; } // it feeds its container
       n.tgt = targetFrom(g, n, n.x, n.y, n.dir);
     }
     for (const e of g.byKind.splitter || []) {
@@ -160,6 +185,8 @@
     if (k === 'split') {
       return n.owner.dir === dir ? { node: n, mode: 'cont' } : { mode: 'none' };
     }
+    // A loading loader takes a belt running straight into its belt end, nothing from the side.
+    if (k === 'loader') return n.owner.lm === 'in' && n.dir === dir ? { node: n, mode: 'cont' } : { mode: 'none' };
     if (k === 'ug_out') {
       if (n.dir === dir || n.dir === FG.opposite(dir)) return { mode: 'none' };
       return { node: n, mode: 'side', lane: dir === FG.rightOf(n.dir) ? 0 : 1 };
@@ -276,11 +303,79 @@
   }
 
   const NONE = { mode: 'none' };
+
+  // ---------------------------------------------------------------- loaders
+  // What sits past a loader's hood: a stopped rail car, or a building with an inventory.
+  function storeFor(g, n) {
+    const car = FG.trains.carAtTile(g, n.cx, n.cy);
+    if (car) return { car };
+    const e = FG.entAt(g, n.cx, n.cy);
+    return e && STORE_KINDS[D.protos[e.p].kind] ? { ent: e } : null;
+  }
+  belts.loaderStore = storeFor;
+  // Put one item in, with the same limits an arm uses (a furnace gets a few ore, not a stack).
+  function storePut(g, st, id) {
+    if (st.car) return FG.trains.carAccept(st.car, id, 'inserter') > 0 && FG.trains.carInsert(st.car, id, 1) > 0;
+    return FG.insertItem(g, st.ent, id, 1, 'inserter') > 0;
+  }
+  // Take one item out (a chest's contents, a machine's products), honouring the filter.
+  function storeTake(g, st, filter) {
+    const list = st.car ? FG.trains.carOutputs(st.car) : FG.outputsOf(g, st.ent);
+    for (const [id, n] of list) {
+      if (n <= 0 || (filter && id !== filter)) continue;
+      if ((st.car ? FG.trains.carTake(st.car, id, 1) : FG.takeOutput(g, st.ent, id, 1)) > 0) return id;
+    }
+    return null;
+  }
+  function updateLoader(g, n) {
+    const e = n.owner;
+    if (e.dead) return;
+    const st = storeFor(g, n);
+    if (e.lm === 'out') {
+      const out = n.tgt || NONE;
+      updateLane(n, n.lanes[0], 0, out);
+      updateLane(n, n.lanes[1], 1, out);
+      if (!st) { e.status = 'no_source'; return; }
+      let moved = false, room = false;
+      for (let L = 0; L < 2; L++) {
+        const lane = n.lanes[L], m = lane.ids.length;
+        // Enter behind the last item, keeping the lane fully packed.
+        const at = m ? Math.min(lane.pos[m - 1] - SP, n.speed) : 0;
+        if (at < -1e-9) continue;
+        room = true;
+        const id = storeTake(g, st, e.filter);
+        if (!id) break;
+        lane.ids.push(id); lane.pos.push(Math.max(0, at));
+        moved = true;
+      }
+      // On a packed belt there is room only every few ticks: still working at full speed.
+      if (moved) e.busy = g.tick;
+      e.status = g.tick - (e.busy || -1e9) <= Math.ceil(SP / n.speed) + 1 ? 'working' : room ? 'waiting' : 'output_full';
+      return;
+    }
+    // The front item goes in as soon as it would reach the hood this tick, before the lane
+    // moves, so the items behind it never lose a step (a packed express belt stays at 45/s).
+    const lim = n.len - SP * 0.5;
+    let moved = false, waiting = false, blocked = false;
+    for (let L = 0; L < 2; L++) {
+      const lane = n.lanes[L];
+      if (lane.ids.length && lane.pos[0] + n.speed >= lim - 1e-6) {
+        const id = lane.ids[0];
+        if (st && (!e.filter || id === e.filter) && storePut(g, st, id)) { lane.ids.shift(); lane.pos.shift(); moved = true; }
+        else blocked = true;
+      }
+      updateLane(n, lane, L, NONE);
+      if (lane.ids.length && lane.pos[0] < lim - 1e-6) waiting = true;
+    }
+    e.status = !st ? 'no_target' : moved || waiting ? 'working' : blocked ? 'target_full' : 'waiting';
+  }
+
   belts.update = function (g) {
     const order = g.beltOrder;
     if (!order) return;
     for (let i = 0; i < order.length; i++) {
       const n = order[i];
+      if (n.loader) { updateLoader(g, n); continue; }
       if (n.part !== undefined) {
         const s = n.owner;
         if (s.dead) continue;
@@ -382,6 +477,7 @@
   // Items that are visible for a node (tunnel belts hide the underground part).
   belts.visibleRange = function (node) {
     const k = kindOf(node);
+    if (k === 'loader') return [0, 1.01];
     if (k === 'ug_in') return [0, 0.5];
     if (k === 'ug_out') return [0.5, 1.01];
     return [0, 1.01];

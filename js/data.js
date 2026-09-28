@@ -65,6 +65,9 @@
   item('splitter', 'Splitter', 'logistics', 'belt', { place: 'splitter' });
   item('fast_splitter', 'Fast splitter', 'logistics', 'belt', { place: 'fast_splitter' });
   item('express_splitter', 'Express splitter', 'logistics', 'belt', { place: 'express_splitter' });
+  item('loader', 'Loader', 'logistics', 'belt', { place: 'loader' });
+  item('fast_loader', 'Fast loader', 'logistics', 'belt', { place: 'fast_loader' });
+  item('express_loader', 'Express loader', 'logistics', 'belt', { place: 'express_loader' });
   item('burner_inserter', 'Burner arm', 'logistics', 'inserter', { place: 'burner_inserter' });
   item('inserter', 'Inserter arm', 'logistics', 'inserter', { place: 'inserter' });
   item('long_inserter', 'Long arm', 'logistics', 'inserter', { place: 'long_inserter' });
@@ -191,6 +194,9 @@
   recipe('splitter', 1, { circuit: 5, iron_plate: 5, belt: 4 }, { splitter: 1 });
   recipe('fast_splitter', 2, { splitter: 1, iron_gear: 10, circuit: 10 }, { fast_splitter: 1 });
   recipe('express_splitter', 2, { fast_splitter: 1, iron_gear: 10, advanced_circuit: 10 }, { express_splitter: 1 });
+  recipe('loader', 1, { inserter: 5, circuit: 5, iron_gear: 5, iron_plate: 5, belt: 5 }, { loader: 1 });
+  recipe('fast_loader', 3, { loader: 1, fast_belt: 5 }, { fast_loader: 1 });
+  recipe('express_loader', 10, { fast_loader: 1, express_belt: 5 }, { express_loader: 1 });
   recipe('burner_inserter', 0.5, { iron_plate: 1, iron_gear: 1 }, { burner_inserter: 1 }, S);
   recipe('inserter', 0.5, { circuit: 1, iron_gear: 1, iron_plate: 1 }, { inserter: 1 }, S);
   recipe('long_inserter', 0.5, { inserter: 1, iron_gear: 1, iron_plate: 1 }, { long_inserter: 1 });
@@ -279,6 +285,11 @@
   proto('splitter', 'splitter', { w: 2, h: 1, speed: 1.875, tier: 1, rotatable: true, solid: false });
   proto('fast_splitter', 'splitter', { w: 2, h: 1, speed: 3.75, tier: 2, rotatable: true, solid: false });
   proto('express_splitter', 'splitter', { w: 2, h: 1, speed: 5.625, tier: 3, rotatable: true, solid: false });
+  // Loaders: a belt end and a hood that fills (or empties) the container, wagon or machine
+  // at the hood end, at full belt speed on both lanes. Items travel in the facing direction.
+  proto('loader', 'loader', { w: 1, h: 2, speed: 1.875, tier: 1, rotatable: true, solid: false, hp: 170 });
+  proto('fast_loader', 'loader', { w: 1, h: 2, speed: 3.75, tier: 2, rotatable: true, solid: false, hp: 170 });
+  proto('express_loader', 'loader', { w: 1, h: 2, speed: 5.625, tier: 3, rotatable: true, solid: false, hp: 170 });
 
   // swing = ticks for one half rotation. power in kW.
   proto('burner_inserter', 'inserter', { swing: 48, burner: true, power: 94, rotatable: true, reach: 1, tint: '#8a6a4a' });
@@ -372,7 +383,7 @@
   const RGBP = { sci_1: 1, sci_2: 1, sci_3: 1, sci_4: 1 };
 
   tech('automation', 'Automation', R, 10, 10, [], ['assembler_1', 'long_inserter']);
-  tech('logistics', 'Logistics', R, 30, 15, [], ['underground_belt', 'splitter']);
+  tech('logistics', 'Logistics', R, 30, 15, [], ['underground_belt', 'splitter', 'loader']);
   tech('turrets', 'Turrets', R, 10, 10, [], ['gun_turret']);
   tech('military', 'Military', R, 10, 15, [], ['smg']);
   tech('walls', 'Stone walls', R, 10, 10, [], ['stone_wall']);
@@ -386,7 +397,7 @@
   tech('toolbelt', 'Toolbelt', RG, 30, 15, ['logistic_science'], [], { effects: [{ type: 'inv', v: 20 }], icon: 'wooden_chest' });
   tech('filter_inserter', 'Sorting arms', RG, 40, 15, ['fast_inserter', 'logistic_science'], ['filter_inserter']);
   tech('automation_2', 'Automation 2', RG, 40, 15, ['logistic_science', 'steel'], ['assembler_2']);
-  tech('logistics_2', 'Logistics 2', RG, 200, 15, ['logistics', 'logistic_science'], ['fast_belt', 'fast_underground', 'fast_splitter']);
+  tech('logistics_2', 'Logistics 2', RG, 200, 15, ['logistics', 'logistic_science'], ['fast_belt', 'fast_underground', 'fast_splitter', 'fast_loader']);
   tech('adv_material', 'Advanced smelting', RG, 75, 15, ['steel', 'logistic_science'], ['steel_furnace']);
   tech('power_distribution', 'Power distribution', RG, 120, 15, ['steel', 'logistic_science'], ['medium_pole', 'big_pole']);
   tech('solar', 'Solar energy', RG, 100, 15, ['steel', 'logistic_science'], ['solar_panel']);
@@ -423,7 +434,7 @@
   tech('adv_material_2', 'Arc smelting', RGB, 250, 30, ['adv_material', 'chemical_science'], ['electric_furnace']);
   tech('modules', 'Modules', RGB, 100, 30, ['advanced_electronics', 'chemical_science'], ['speed_module', 'efficiency_module', 'productivity_module']);
   tech('beacons', 'Beacons', RGB, 150, 30, ['modules'], ['beacon']);
-  tech('logistics_3', 'Logistics 3', RGB, 300, 30, ['logistics_2', 'chemical_science'], ['express_belt', 'express_underground', 'express_splitter']);
+  tech('logistics_3', 'Logistics 3', RGB, 300, 30, ['logistics_2', 'chemical_science'], ['express_belt', 'express_underground', 'express_splitter', 'express_loader']);
   tech('processing_unit', 'Processor cores', RGB, 300, 30, ['advanced_electronics', 'sulfur', 'chemical_science'], ['processing_unit']);
   tech('inserter_cap_2', 'Arm capacity 2', RGB, 250, 30, ['inserter_cap_1', 'chemical_science'], [], { effects: [{ type: 'hand', v: 1 }], icon: 'filter_inserter' });
   tech('research_speed_2', 'Research speed 2', RGB, 200, 30, ['research_speed_1', 'chemical_science'], [], { effects: [{ type: 'lab_speed', v: 0.3 }], icon: 'lab' });

@@ -17,7 +17,7 @@ A keyboard and mouse are required.
 - steam power by the lake;
 - a burner miner feeding a stone furnace;
 - a self-fuelling burner-drill coal outpost;
-- eight electric miners feeding a belt into an eight-furnace smelting column;
+- eight electric miners feeding a belt into an eight-furnace smelting column, whose plates a loader puts into a chest;
 - assemblers making gears and Mechanics packs for two labs;
 - a copper railway whose drills load the wagon and whose arms unload it into furnaces.
 
@@ -37,7 +37,7 @@ It's a normal game from there: explore it, open every machine, or keep building.
 | Put one of the held item into a machine, chest, belt or train | Z (hold it and sweep to put one into each) |
 | Split a stack | Right-click it in the inventory (Shift+right-click takes it all), then click a slot; right-click puts down one at a time |
 | Move half a stack into a machine | Right-click it in the machine's window |
-| Rotate | R (Shift+R reverses) |
+| Rotate | R (Shift+R reverses; on a loader, R swaps loading and unloading) |
 | Clear hand, or copy the hovered building into your hand | Q |
 | Inventory and crafting | E |
 | Research | T |
@@ -69,6 +69,7 @@ Guided objectives in the top-left walk you through the arc.
 ## Systems
 
 - **Belts** have two lanes that carry visible items. Arms put items on the far lane and pick up from either lane, as in Factorio; drills drop ore on the lane nearest them, so drills on both sides of a belt fill both lanes. They handle curves, side-loading, tunnel belts and splitters (with priority and filters), in three speed tiers of 15, 30 and 45 items/s. Items are processed downstream-first, so fully compressed belts reach their full rated throughput.
+- **Loaders** (researched with Logistics, Logistics 2 and 3) are 1×2 pieces with a belt end and a hood. They move items between a belt and the chest, machine or stopped wagon at the hood, on both lanes at full belt speed (15, 30 or 45 items/s). The arrow shows the way items go: point a loader at a chest to fill it, away from one to empty it, and the build preview shows which it will do. R (or the Load/Unload switch in its window) turns a loader round in place, and a filter limits it to one item. Machines only get what they need, as from an arm, so a loader can feed a furnace and another can empty it.
 - **Arms** only pick up what their target can use, keep small input buffers, and take output only. Burner arms refuel themselves. A burner holds one kind of fuel at a time, so an arm bringing coal waits (and says so) until hand-loaded wood is burnt or taken out.
 - **Machines** show a status: working, no power, low power, out of fuel, missing ingredients, output full, or ore depleted. Stuck machines get a badge in the world.
 - **Power networks** are built from poles. Steam engines draw from shared steam networks. Solar output follows the day/night cycle, and accumulators buffer the difference. When demand exceeds supply, every machine slows down.
@@ -118,7 +119,7 @@ node tests/sim.test.js   # data integrity + simulation behaviour (belts, power, 
 node tests/perf.js       # ~14,000-entity factory: ms per tick and topology rebuild cost
 ```
 
-The browser scripts (`tests/smoke.cjs`, `tests/play.cjs`, `tests/trains.cjs`, `tests/tour.cjs`, `tests/showcase.cjs` and others) drive the real page with Playwright. `tests/tour.cjs` walks through the Demo factory with real clicks and takes about 40 screenshots of the buildings and every window. They mine, build, fuel, drag belts, configure assemblers, save and load, and take screenshots.
+The browser scripts (`tests/smoke.cjs`, `tests/play.cjs`, `tests/trains.cjs`, `tests/tour.cjs`, `tests/showcase.cjs` and others) drive the real page with Playwright. `tests/tour.cjs` walks through the Demo factory with real clicks and takes about 40 screenshots of the buildings and every window. `tests/loaders.cjs` builds loaders by hand: chest to belt to chest, a furnace fed and emptied, every tier, and a wagon. They mine, build, fuel, drag belts, configure assemblers, save and load, and take screenshots.
 
 ## Not in this version yet
 

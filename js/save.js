@@ -5,7 +5,7 @@
   const D = FG.data;
   const save = (FG.save = {});
   const SKIP = new Set(['net', 'tgt', 'outs', 'pair', 'curveIn', 'inDir', 'len', 'speed', 'owner', 'fmap', 'wires', 'target',
-    'cap', 'fx', 'want', 'status', 'pairX', 'pairY', 'lastHit', 'dead', 'fbs', 'halves', 'inv', 'ox', 'oy']);
+    'cap', 'fx', 'want', 'status', 'pairX', 'pairY', 'lastHit', 'dead', 'fbs', 'halves', 'inv', 'ox', 'oy', 'node', 'busy']);
 
   function b64(bytes) {
     let s = '';

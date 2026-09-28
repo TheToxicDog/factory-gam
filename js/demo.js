@@ -73,8 +73,8 @@
     }
     for (const y of [169, 175, 181]) put('medium_pole', 218, y);
     belt(222, 181, 222, 166, N);
-    put('inserter', 222, 165, N);
-    put('iron_chest', 222, 164);
+    put('iron_chest', 222, 163);
+    put('loader', 222, 164, N); // plates off the belt and into the chest
     put('medium_pole', 223, 166);
 
     // --- Science: gears and Mechanics packs, carried by belt to two labs.

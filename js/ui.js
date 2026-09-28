@@ -39,8 +39,21 @@
     waiting: ['Waiting for items', ''], target_full: ['Target has enough', ''], other_fuel: ['Target is burning a different fuel', 'warn'], no_water: ['No water', 'warn'], no_ammo: ['Out of ammo', 'bad'],
     ready: ['Ready to launch', 'good'], need_satellite: ['Needs a Survey satellite', 'warn'], launching: ['Launching', 'good'],
   };
+  // Loaders read differently loading ('in') and unloading ('out').
+  const LOADER_STATUS = {
+    'in:working': ['Loading', 'good'], 'in:waiting': ['Waiting for items', ''], 'in:target_full': ['Target is full', 'warn'], 'in:no_target': ['Nothing to load into', 'warn'],
+    'out:working': ['Unloading', 'good'], 'out:waiting': ['Nothing left to unload', ''], 'out:output_full': ['Belt is backed up', ''], 'out:no_source': ['Nothing to unload from', 'warn'],
+  };
+  // What a loader fills or empties, in words.
+  function loaderTarget(g, e) {
+    const st = FG.belts.loaderStore(g, e.node);
+    if (!st) return 'nothing';
+    if (st.car) return st.car.type === 'loco' ? 'locomotive' : 'wagon';
+    return nameOf(D.protos[st.ent.p].item).toLowerCase();
+  }
   function statusOf(e) {
     const pr = D.protos[e.p];
+    if (pr.kind === 'loader') return LOADER_STATUS[e.lm + ':' + e.status] || STATUS[e.status] || null;
     if (pr.kind === 'pole') {
       const n = e.net;
       if (!n) return ['Not connected', ''];
@@ -186,8 +199,9 @@
         const bits = [];
         if (pr.power && !pr.burner) bits.push('Uses ' + FG.fmtPower(pr.power) + ' electric');
         if (pr.burner) bits.push('Burns fuel (' + FG.fmtPower(pr.power) + ')');
-        if (pr.speed && pr.kind !== 'belt' && pr.kind !== 'underground' && pr.kind !== 'splitter') bits.push('Speed ' + pr.speed);
-        if (pr.kind === 'belt' || pr.kind === 'underground' || pr.kind === 'splitter') bits.push(Math.round(pr.speed * 8) + ' items/s');
+        if (pr.speed && !FG.isBeltKind(pr.kind)) bits.push('Speed ' + pr.speed);
+        if (FG.isBeltKind(pr.kind)) bits.push(Math.round(pr.speed * 8) + ' items/s');
+        if (pr.kind === 'loader') bits.push('Point it at a chest to fill it, away to empty it');
         if (pr.maxDist) bits.push('Max length ' + pr.maxDist);
         if (pr.supply) bits.push('Supply area ' + pr.supply * 2 + '×' + pr.supply * 2 + ', wire reach ' + pr.reach);
         if (pr.pollution) bits.push('Pollution ' + pr.pollution + '/min');
@@ -445,9 +459,13 @@
           kv('Items on belt', String(n));
           kv('Throughput', Math.round(pr.speed * 8) + ' items/s');
         }
+        if (pr.kind === 'loader') {
+          kv(e.lm === 'out' ? 'Unloading from' : 'Loading into', loaderTarget(g, e));
+          if (e.filter) kv('Filter', nameOf(e.filter));
+        }
         if (pr.kind === 'inserter' && e.filter) kv('Filter', nameOf(e.filter));
         if (e.hp < pr.hp) kv('Health', Math.ceil(e.hp) + ' / ' + pr.hp);
-        parts.push(h('div', { class: 'kv', style: 'margin-top:6px;font-size:12px' }, h('span', { text: 'Click open · Ctrl+click take items' + (pr.burner ? ' or fuel' : '') + ' · right-click pick up · R rotate' })));
+        parts.push(h('div', { class: 'kv', style: 'margin-top:6px;font-size:12px' }, h('span', { text: pr.kind === 'loader' ? 'Click open · right-click pick up · R swaps loading and unloading' : 'Click open · Ctrl+click take items' + (pr.burner ? ' or fuel' : '') + ' · right-click pick up · R rotate' })));
       } else if (hv.ghost) {
         parts.push(h('h3', { text: 'Ghost: ' + nameOf(D.protos[hv.ghost.p].item) }));
         parts.push(h('div', { class: 'kv' }, h('span', { text: g.bonus.drones ? 'Drones will build it when you have the item nearby' : 'Click with an empty hand to build it from your inventory' })));
@@ -968,6 +986,22 @@
           const renderSeg = () => { seg.innerHTML = ''; for (const [v, l] of opts) seg.appendChild(h('button', { class: ent.prio === v ? 'on' : '', text: l, onclick: () => { ent.prio = v; renderSeg(); } })); };
           renderSeg();
           put(h('div', { class: 'group' }, h('div', { class: 'label', text: 'Output priority' }), seg), this.filterPicker(ent, upd, 'Filtered item goes to the priority side (left if balanced)'));
+          break;
+        }
+        case 'loader': {
+          const seg = h('div', { class: 'seg' });
+          const renderSeg = () => {
+            seg.innerHTML = '';
+            seg.dataset.lm = ent.lm;
+            for (const [v, l] of [['in', 'Load'], ['out', 'Unload']]) seg.appendChild(h('button', { class: ent.lm === v ? 'on' : '', text: l, onclick: () => { if (ent.lm !== v) FG.rotateEntity(g, ent); renderSeg(); } }));
+          };
+          renderSeg();
+          upd(() => { if (seg.dataset.lm !== ent.lm) renderSeg(); });
+          put(h('div', { class: 'group' }, h('div', { class: 'label', text: 'Mode' }), seg),
+            kvs([['Hood end', () => (ent.lm === 'out' ? 'unloading ' : 'loading ') + loaderTarget(g, ent)], ['Speed', () => Math.round(pr.speed * 8) + ' items/s'],
+              ['On the belt end', () => String(ent.lanes[0].ids.length + ent.lanes[1].ids.length)]]),
+            this.filterPicker(ent, upd, 'Only moves this item'),
+            h('div', { class: 'hint', text: 'A loader moves items between its belt end and the chest, machine or stopped wagon at its hood, on both lanes at full belt speed. The arrow shows the way items go: point it at a chest to fill it, away from one to empty it. Machines only get what they need, as from an arm. Switching mode (or R) turns it round in place.' }));
           break;
         }
         case 'turret': {
@@ -1533,6 +1567,7 @@
           h('li', { text: 'Burner drills drop ore into whatever is in front of them. A drill facing a stone furnace is a complete mine-and-smelt line.' }),
           h('li', { text: 'Arms (inserters) move items from behind them to the tile in front, and only take what the target needs.' }),
           h('li', { text: 'Belts have two lanes. Arms put items on the far lane and pick up from either lane; drills drop ore on the lane nearest them; a belt feeding into the side of another fills one lane.' }),
+          h('li', { text: 'Loaders (Logistics research) move a whole belt of items into or out of a chest, machine or stopped wagon. The arrow shows the way items go: point it at a chest to fill it, away from one to empty it. R swaps loading and unloading.' }),
           h('li', { text: 'Power: water pump on a shore → boiler (fuel it) → steam engines. Poles connect machines inside their blue area.' }),
           h('li', { text: 'Machines show a badge when stuck: lightning for power, … for missing ingredients, ▲ for a full output.' }),
           h('li', { text: 'Pollution provokes the native hives. Put turrets and walls between your factory and them, and keep turrets fed with magazines.' }),

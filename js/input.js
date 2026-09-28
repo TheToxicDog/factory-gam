@@ -430,7 +430,15 @@
       const x = Math.round(this.mouse.wx - fw0 / 2), y = Math.round(this.mouse.wy - fh0 / 2);
       d = this.smartDir(pr, x, y, d);
       const [fw, fh] = FG.footprint(pr, d);
-      return { p: pr.id, x, y, dir: d, fw, fh };
+      // A loader loads a container it points at and unloads one behind it; upgrading one in
+      // place keeps its mode.
+      let lm;
+      if (pr.kind === 'loader') {
+        const old = FG.entAt(this.g, x, y);
+        const same = old && D.protos[old.p].kind === 'loader' && old.x === x && old.y === y && old.dir === d;
+        lm = same ? old.lm : FG.belts.guessLoaderMode(this.g, x, y, d);
+      }
+      return { p: pr.id, x, y, dir: d, fw, fh, lm };
     }
 
     // Orient pumps toward water and pair tunnel pipes automatically.
@@ -513,7 +521,7 @@
         this.drag.last = [pv.x, pv.y];
         return;
       }
-      const ent = this.tryBuild(c.item, pv.x, pv.y, pv.dir, c.ghost);
+      const ent = this.tryBuild(c.item, pv.x, pv.y, pv.dir, c.ghost, pv.lm ? { lm: pv.lm } : undefined);
       if (ent) this.drag.placed.push(ent.id);
       this.drag.last = [pv.x, pv.y];
     }
@@ -616,7 +624,7 @@
         }
         const bp = {
           w: bw, h: bh,
-          ents: inside.map((e) => ({ p: e.p, dx: e.x - bx, dy: e.y - by, dir: e.dir, settings: { recipe: e.recipe || null, filter: e.filter, prio: e.prio, rd: e.rd, name: e.name } })),
+          ents: inside.map((e) => ({ p: e.p, dx: e.x - bx, dy: e.y - by, dir: e.dir, settings: { recipe: e.recipe || null, filter: e.filter, prio: e.prio, rd: e.rd, name: e.name, lm: e.lm } })),
           rails: railsIn.map((pc) => [pc.ax - bx, pc.ay - by, pc.ah, pc.t]),
         };
         app.blueprint = bp;
@@ -734,7 +742,7 @@
         const [ax, ay] = this.blueprintAnchor(c.bp);
         view.build = {
           p: c.bp.ents.length ? c.bp.ents[0].p : null,
-          previews: c.bp.ents.map((b) => ({ p: b.p, x: ax + b.dx, y: ay + b.dy, dir: b.dir, rd: b.settings && b.settings.rd, ok: FG.canPlace(g, b.p, ax + b.dx, ay + b.dy, b.dir, { noReplace: true }).ok })),
+          previews: c.bp.ents.map((b) => ({ p: b.p, x: ax + b.dx, y: ay + b.dy, dir: b.dir, rd: b.settings && b.settings.rd, lm: b.settings && b.settings.lm, ok: FG.canPlace(g, b.p, ax + b.dx, ay + b.dy, b.dir, { noReplace: true }).ok })),
         };
         if (c.bp.rails && c.bp.rails.length) {
           const pieces = c.bp.rails.map(([dx, dy, ah, t]) => { const pc = FG.rails.makePiece(ax + dx, ay + dy, ah, t); pc.exists = g.rail.byKey.has(pc.key); return pc; });
@@ -748,7 +756,7 @@
         const reach = this.inReach(pv.x + pv.fw / 2, pv.y + pv.fh / 2, BUILD_REACH);
         const have = g.player.inv.count(c.item) > 0;
         view.outOfReach = !reach && !c.ghost;
-        view.build = { p: pv.p, previews: [{ p: pv.p, x: pv.x, y: pv.y, dir: pv.dir, rd: pv.rd, ok: chk.ok && !pv.loose && (reach || c.ghost) && (have || g.bonus.drones) }], showPoles: this.keys.has('ShiftLeft') || this.keys.has('ShiftRight') };
+        view.build = { p: pv.p, previews: [{ p: pv.p, x: pv.x, y: pv.y, dir: pv.dir, rd: pv.rd, lm: pv.lm, ok: chk.ok && !pv.loose && (reach || c.ghost) && (have || g.bonus.drones) }], showPoles: this.keys.has('ShiftLeft') || this.keys.has('ShiftRight') };
         if (m.left && this.drag) this.dragBuild();
       }
       view.carPreview = null;

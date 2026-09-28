@@ -235,7 +235,7 @@
           const e = g.ents.get(id);
           if (!e || e.x > wx1 + 1 || e.y > wy1 + 1 || e.x + e.w < wx0 - 1 || e.y + e.h < wy0 - 1) continue;
           const k = D.protos[e.p].kind;
-          if (k === 'belt' || k === 'underground' || k === 'splitter' || k === 'pipe' || k === 'pipe_ug') ground.push(e);
+          if (k === 'belt' || k === 'underground' || k === 'splitter' || k === 'loader' || k === 'pipe' || k === 'pipe_ug') ground.push(e);
           else objects.push(e);
           if (k === 'inserter') arms.push(e);
         }
@@ -319,6 +319,10 @@
         } else if (pr.kind === 'splitter') {
           for (const h of e.halves) { this.blit(S.belt(pr.tier, 0, e.dir, frame), h.x, h.y); nodes.push(h); }
           hoods.push(e);
+        } else if (pr.kind === 'loader') {
+          this.blit(S.belt(pr.tier, 0, e.dir, frame), e.node.x, e.node.y);
+          nodes.push(e.node);
+          hoods.push(e);
         }
       }
       // Items on lanes.
@@ -342,6 +346,7 @@
       for (const e of hoods) {
         const pr = D.protos[e.p];
         if (pr.kind === 'underground') this.blit(S.hood(pr.tier, e.ug === 'in', e.dir), e.x, e.y);
+        else if (pr.kind === 'loader') this.blit(S.loader(pr.tier, e.lm !== 'out', e.dir), e.x, e.y);
         else this.blit(S.splitter(pr.tier, e.dir), e.x, e.y);
       }
     }
@@ -572,12 +577,12 @@
       const ctx = this.ctx;
       for (const gh of g.ghosts.values()) {
         if (gh.x > wx1 || gh.y > wy1 || gh.x + gh.w < wx0 || gh.y + gh.h < wy0) continue;
-        this.drawProtoPreview(gh.p, gh.x, gh.y, gh.dir, 0.4, '#58a6d8', gh.settings && gh.settings.rd);
+        this.drawProtoPreview(gh.p, gh.x, gh.y, gh.dir, 0.4, '#58a6d8', gh.settings && gh.settings.rd, gh.settings && gh.settings.lm);
       }
       ctx.globalAlpha = 1;
     }
 
-    drawProtoPreview(p, x, y, dir, alpha, tint, rd) {
+    drawProtoPreview(p, x, y, dir, alpha, tint, rd, lm) {
       const ctx = this.ctx, T = this.T;
       const pr = D.protos[p];
       const [fw, fh] = FG.footprint(pr, dir);
@@ -589,6 +594,10 @@
         this.blit(S.belt(pr.tier, 0, dir, 0), x + ax, y + ay, alpha);
         this.blit(S.belt(pr.tier, 0, dir, 0), x + bx, y + by, alpha);
         this.blit(S.splitter(pr.tier, dir), x, y, alpha);
+      } else if (pr.kind === 'loader') {
+        const t = FG.loaderTiles(x, y, dir, lm);
+        this.blit(S.belt(pr.tier, 0, dir, 0), t.bx, t.by, alpha);
+        this.blit(S.loader(pr.tier, lm !== 'out', dir), x, y, alpha);
       } else if (pr.kind === 'signal' || pr.kind === 'trainstop') {
         ctx.save(); ctx.translate(sx, sy);
         if (pr.kind === 'signal') S.paintSignal(ctx, T, pr.role, rd || 0, '#7ac05a'); else S.paintStop(ctx, T, rd || 0);
@@ -848,6 +857,7 @@
           if (!badge) continue;
           const k = D.protos[e.p].kind;
           if (k === 'inserter' && e.status !== 'no_power' && e.status !== 'no_fuel') continue;
+          if (k === 'loader') continue; // a backed-up belt is a loader doing its job
           if (k === 'turret' && e.status !== 'no_ammo') continue;
           const [sx, sy] = this.toScreen(e.x + e.w / 2, e.y + e.h / 2);
           const pulse = e.status === 'no_power' || e.status === 'no_fuel' ? 0.7 + 0.3 * Math.sin(g.tick * 0.12) : 1;
@@ -868,7 +878,7 @@
           let id = null;
           if (pr.kind === 'chest') { const s = e.inv.slots.find((x) => x); id = s && s.id; }
           else if (pr.kind === 'furnace' && e.recipe) id = D.recipes[e.recipe].main;
-          else if ((pr.kind === 'inserter' || pr.kind === 'splitter') && e.filter) id = e.filter;
+          else if ((pr.kind === 'inserter' || pr.kind === 'splitter' || pr.kind === 'loader') && e.filter) id = e.filter;
           if (!id) continue;
           const [sx, sy] = this.toScreen(e.x + e.w / 2, e.y + e.h / 2);
           const s = T * 0.62;
@@ -916,6 +926,7 @@
         if (pr.kind === 'pole') this.poleArea(e.x, e.y, e.w, e.h, pr.supply, false);
         if (pr.kind === 'drill') { const a = FG.drillArea(pr, e.x, e.y, e.w, e.h); this.area(a[0], a[1], a[2] - a[0], a[3] - a[1], '#7ac05a'); }
         if (pr.kind === 'inserter') this.armTargets(e.x, e.y, e.dir, pr.reach);
+        if (pr.kind === 'loader') this.loaderHint(g, { cx: e.node.cx, cy: e.node.cy });
         if (pr.kind === 'turret' || pr.kind === 'laser') this.rangeCircle(e.x + 1, e.y + 1, pr.range);
         if (pr.kind === 'beacon') this.area(e.x - pr.range, e.y - pr.range, e.w + pr.range * 2, e.h + pr.range * 2, '#b0a8e8');
       } else if (h && h.tile) {
@@ -944,7 +955,7 @@
       const b = view.build;
       if (b) {
         for (const pv of b.previews) {
-          this.drawProtoPreview(pv.p, pv.x, pv.y, pv.dir, 0.6, pv.ok ? '#7ac05a' : '#e0553f', pv.rd);
+          this.drawProtoPreview(pv.p, pv.x, pv.y, pv.dir, 0.6, pv.ok ? '#7ac05a' : '#e0553f', pv.rd, pv.lm);
         }
         const pr = D.protos[b.p];
         const first = b.previews[0];
@@ -958,6 +969,7 @@
           if (pr.kind === 'turret' || pr.kind === 'laser') this.rangeCircle(first.x + 1, first.y + 1, pr.range);
           if (pr.kind === 'beacon') this.area(first.x - pr.range, first.y - pr.range, 3 + pr.range * 2, 3 + pr.range * 2, '#b0a8e8');
           if (pr.kind === 'underground') this.ugHint(g, first, pr);
+          if (pr.kind === 'loader') this.loaderHint(g, FG.loaderTiles(first.x, first.y, first.dir, first.lm));
           if (b.showPoles) this.allPoleAreas(g);
         }
       } else if (view.showPoleAreas) this.allPoleAreas(g);
@@ -1046,6 +1058,15 @@
       ctx.strokeStyle = 'rgba(224,85,63,0.5)'; ctx.lineWidth = 1.5;
       ctx.beginPath(); ctx.arc(sx, sy, r * T, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
     }
+    // The tile a loader fills or empties: green over a chest, machine or wagon, amber if bare.
+    loaderHint(g, t) {
+      const ctx = this.ctx, T = this.T;
+      const ok = FG.belts.isStore(g, t.cx, t.cy);
+      const [sx, sy] = this.toScreen(t.cx, t.cy);
+      ctx.fillStyle = ok ? 'rgba(122,192,90,0.18)' : 'rgba(240,168,48,0.12)';
+      ctx.fillRect(sx, sy, T, T);
+      this.brackets(sx + T * 0.1, sy + T * 0.1, T * 0.8, T * 0.8, ok ? '#7ac05a' : '#f0a830');
+    }
     ugHint(g, pv, pr) {
       // Show where a tunnel belt placed here would pair.
       const back = FG.opposite(pv.dir);
@@ -1112,7 +1133,7 @@
       const [sx, sy] = toM(e.x, e.y);
       if (sx > cw || sy > ch || sx < -10 || sy < -10) continue;
       const k = D.protos[e.p].kind;
-      ctx.fillStyle = k === 'signal' || k === 'trainstop' ? '#8a8078' : k === 'belt' || k === 'underground' || k === 'splitter' ? '#c8a040' : k === 'pole' ? '#7a8a9a' : k === 'pipe' || k === 'pipe_ug' ? '#6a8aa8' : k === 'turret' || k === 'laser' || k === 'wall' ? '#b0b0b0' : '#9ab0c8';
+      ctx.fillStyle = k === 'signal' || k === 'trainstop' ? '#8a8078' : k === 'belt' || k === 'underground' || k === 'splitter' || k === 'loader' ? '#c8a040' : k === 'pole' ? '#7a8a9a' : k === 'pipe' || k === 'pipe_ug' ? '#6a8aa8' : k === 'turret' || k === 'laser' || k === 'wall' ? '#b0b0b0' : '#9ab0c8';
       ctx.fillRect(sx, sy, Math.max(1, e.w * scale), Math.max(1, e.h * scale));
     }
     // Enemies (only in charted chunks)
