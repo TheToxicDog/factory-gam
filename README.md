@@ -58,7 +58,7 @@ Guided objectives in the top-left walk you through the arc.
 - **Fluids** pool across connected pipes and machines. Each network holds one fluid. A full output blocks the machine, which is what makes oil byproducts a puzzle.
 - **Pollution** spreads between 32×32 chunks and is absorbed by terrain and forests. When it reaches a hive, the hive gathers an attack wave that pathfinds (A*) to your polluting buildings. Hive evolution rises with time, pollution and destroyed hives, bringing crawlers, brutes, titans and colossi. Defend with turrets, laser turrets and walls, or play with Peaceful or no enemies.
 - **Blueprints** copy, cut and paste areas. After you research Construction drones, ghosts build themselves from your inventory while you are nearby.
-- **Saves** go to browser storage as gzip. There are three slots plus an autosave every 5 minutes. You can also export or import a save code to move a game between browsers.
+- **Saves** go to browser storage as gzip. There are three slots plus an autosave every 3 minutes (and whenever you quit or start another game). You can also export or import a save code to move a game between browsers.
 
 ## Project layout
 

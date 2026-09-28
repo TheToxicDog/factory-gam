@@ -3,7 +3,7 @@
   'use strict';
   const D = FG.data;
   const STEP = 1000 / FG.TICKS;
-  const AUTOSAVE_TICKS = 5 * 60 * 60;
+  const AUTOSAVE_TICKS = 3 * 60 * 60;
 
   const app = (FG.app = {
     game: null,
@@ -49,6 +49,7 @@
   app.autoHotbar = autoHotbar;
 
   app.startGame = function (g) {
+    if (app.game && app.game !== g) autosaveCurrent();
     app.game = g;
     app.demo = null;
     app.cursor = null;
@@ -70,13 +71,20 @@
     app.onWindowChange();
   };
 
+  // Keep the running game safe before replacing it.
+  function autosaveCurrent() {
+    if (app.game && !app.titleShown && app.game.tick > 60) FG.save.store(app.game, 'auto').catch(() => {});
+  }
+
   app.newGame = function (opts) {
+    autosaveCurrent();
     const g = new FG.Game(opts);
     app.startGame(g);
     app.ui.toast('Landed. Follow the objectives at the top left.', 'good');
   };
 
   app.showTitle = function () {
+    autosaveCurrent();
     app.titleShown = true;
     app.game = null;
     document.getElementById('hud').hidden = true;
