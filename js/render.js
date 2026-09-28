@@ -235,11 +235,12 @@
           const e = g.ents.get(id);
           if (!e || e.x > wx1 + 1 || e.y > wy1 + 1 || e.x + e.w < wx0 - 1 || e.y + e.h < wy0 - 1) continue;
           const k = D.protos[e.p].kind;
-          if (k === 'belt' || k === 'underground' || k === 'splitter' || k === 'pipe' || k === 'pipe_ug' || k === 'rail') ground.push(e);
+          if (k === 'belt' || k === 'underground' || k === 'splitter' || k === 'pipe' || k === 'pipe_ug') ground.push(e);
           else objects.push(e);
           if (k === 'inserter') arms.push(e);
         }
       }
+      this.drawRails(g, wx0, wy0, wx1, wy1, view);
       this.drawGround(g, ground, view);
       objects.sort((a, b) => a.y + a.h - (b.y + b.h));
       for (const e of objects) this.drawEntity(g, e, view);
@@ -255,30 +256,55 @@
       this.drawOverlays(g, objects.concat(ground), view);
     }
 
+    // -------------------------------------------------------------- track
+    // Map world units to screen pixels on the canvas context.
+    worldTransform() {
+      const T = this.T, d = this.dpr;
+      this.ctx.setTransform(d * T, 0, 0, d * T, d * (this.W / 2 - this.cam.x * T), d * (this.H / 2 - this.cam.y * T));
+    }
+    drawRails(g, wx0, wy0, wx1, wy1, view) {
+      const R = g.rail, RL = FG.rails;
+      const vis = (pc) => { const b = S.trackBox(pc); return b[0] < wx1 && b[2] > wx0 && b[1] < wy1 && b[3] > wy0; };
+      const list = [], ends = [];
+      for (const pc of R.pieces.values()) {
+        if (!vis(pc)) continue;
+        list.push(pc);
+        // Buffer stops where the track ends.
+        if (!R.out.has(RL.stateKey(pc.bx, pc.by, pc.bh))) ends.push([pc.bx, pc.by, pc.bh]);
+        if (!R.out.has(RL.stateKey(pc.ax, pc.ay, RL.opp8(pc.ah)))) ends.push([pc.ax, pc.ay, RL.opp8(pc.ah)]);
+      }
+      const ghosts = [];
+      for (const pc of R.ghosts.values()) if (vis(pc)) ghosts.push(pc);
+      const plan = view.railPlan;
+      if (!list.length && !ghosts.length && !plan) return;
+      const ctx = this.ctx;
+      ctx.save();
+      this.worldTransform();
+      S.drawTrack(ctx, list, this.T, { ends });
+      const marked = list.filter((pc) => pc.decon);
+      if (marked.length) S.drawTrack(ctx, marked, this.T, { alpha: 0.5, tint: 'rgba(224,85,63,0.8)' });
+      if (ghosts.length) S.drawTrack(ctx, ghosts, this.T, { alpha: 0.35, tint: 'rgba(88,166,216,0.7)' });
+      if (plan) {
+        const fresh = plan.pieces.filter((pc) => !pc.exists);
+        S.drawTrack(ctx, fresh, this.T, { alpha: 0.5, tint: plan.ok ? 'rgba(122,192,90,0.75)' : 'rgba(224,85,63,0.8)' });
+        const reuse = plan.pieces.filter((pc) => pc.exists);
+        if (reuse.length) S.drawTrack(ctx, reuse, this.T, { alpha: 0.25, tint: 'rgba(240,230,210,0.6)' });
+        if (plan.point) {
+          ctx.fillStyle = plan.ok ? '#7ac05a' : '#e0553f';
+          ctx.beginPath(); ctx.arc(plan.point[0], plan.point[1], 0.28, 0, Math.PI * 2); ctx.fill();
+        }
+      }
+      ctx.restore();
+    }
+
     // -------------------------------------------------------------- belts
     drawGround(g, list, view) {
       const ctx = this.ctx, T = this.T;
       const tick = g.tick;
       const hoods = [];
       const nodes = [];
-      // Track goes underneath everything else on the ground.
       for (const e of list) {
         const pr = D.protos[e.p];
-        if (pr.kind !== 'rail') continue;
-        this.blit(S.rail(e.mask), e.x, e.y);
-        if (pr.role !== 'rail') {
-          const [sx, sy] = this.toScreen(e.x, e.y);
-          let lamp = '#f0a830';
-          if (pr.role !== 'stop') {
-            const st = FG.trains.blockState(g, e.x, e.y);
-            lamp = st === 'free' ? '#7ac05a' : st === 'reserved' ? '#e8c547' : '#e0553f';
-          }
-          S.paintRailMark(ctx, pr.role, T, sx, sy, lamp);
-        }
-      }
-      for (const e of list) {
-        const pr = D.protos[e.p];
-        if (pr.kind === 'rail') continue;
         if (pr.kind === 'pipe' || pr.kind === 'pipe_ug') { this.drawPipe(g, e); continue; }
         const frame = Math.floor(tick * (pr.speed / FG.TICKS) * 32) & 7;
         if (pr.kind === 'belt') {
@@ -367,6 +393,15 @@
       const working = e.status === 'working' || e.status === 'low_power';
       const t = g.tick;
       switch (pr.kind) {
+        case 'signal': {
+          const st = FG.trains.signalState(g, e);
+          const lamp = st === 'free' ? '#7ac05a' : st === 'reserved' ? '#e8c547' : st === 'occupied' ? '#e0553f' : '#5a5650';
+          ctx.save(); ctx.translate(sx, sy); S.paintSignal(ctx, T, pr.role, e.rd || 0, lamp); ctx.restore();
+          break;
+        }
+        case 'trainstop':
+          ctx.save(); ctx.translate(sx, sy); S.paintStop(ctx, T, e.rd || 0); ctx.restore();
+          break;
         case 'drill': {
           const cx = sx + W / 2, cy = sy + H / 2 + T * 0.1;
           const r = W * 0.28;
@@ -537,12 +572,12 @@
       const ctx = this.ctx;
       for (const gh of g.ghosts.values()) {
         if (gh.x > wx1 || gh.y > wy1 || gh.x + gh.w < wx0 || gh.y + gh.h < wy0) continue;
-        this.drawProtoPreview(gh.p, gh.x, gh.y, gh.dir, 0.4, '#58a6d8', gh.settings && gh.settings.mask);
+        this.drawProtoPreview(gh.p, gh.x, gh.y, gh.dir, 0.4, '#58a6d8', gh.settings && gh.settings.rd);
       }
       ctx.globalAlpha = 1;
     }
 
-    drawProtoPreview(p, x, y, dir, alpha, tint, mask) {
+    drawProtoPreview(p, x, y, dir, alpha, tint, rd) {
       const ctx = this.ctx, T = this.T;
       const pr = D.protos[p];
       const [fw, fh] = FG.footprint(pr, dir);
@@ -554,9 +589,10 @@
         this.blit(S.belt(pr.tier, 0, dir, 0), x + ax, y + ay, alpha);
         this.blit(S.belt(pr.tier, 0, dir, 0), x + bx, y + by, alpha);
         this.blit(S.splitter(pr.tier, dir), x, y, alpha);
-      } else if (pr.kind === 'rail') {
-        this.blit(S.rail(mask || 0), x, y, alpha);
-        if (pr.role !== 'rail') { ctx.globalAlpha = alpha; S.paintRailMark(ctx, pr.role, T, sx, sy); ctx.globalAlpha = 1; }
+      } else if (pr.kind === 'signal' || pr.kind === 'trainstop') {
+        ctx.save(); ctx.translate(sx, sy);
+        if (pr.kind === 'signal') S.paintSignal(ctx, T, pr.role, rd || 0, '#7ac05a'); else S.paintStop(ctx, T, rd || 0);
+        ctx.restore();
       } else if (pr.kind === 'pipe') {
         ctx.fillStyle = '#8a959f'; ctx.fillRect(sx + T * 0.3, sy + T * 0.3, T * 0.4, T * 0.4);
       } else this.blit(S.entity(p, dir), x, y, alpha);
@@ -590,7 +626,7 @@
           ctx.save();
           ctx.translate(sx, sy);
           ctx.rotate(p.angle + (c.flip ? Math.PI : 0));
-          S.paintCar(ctx, c.type, T * FG.trains.CAR_LEN, T * 0.8, icon);
+          S.paintCar(ctx, c.type, T * FG.trains.CAR_LEN, T * FG.trains.CAR_W, icon);
           ctx.restore();
           // coupler to the next car
           if (i < tr.cars.length - 1) {
@@ -772,7 +808,7 @@
         if (c.type !== 'loco') return;
         const p = FG.trains.carPose(tr, i);
         const sgn = c.flip ? -1 : 1;
-        hole(p.x + Math.cos(p.angle) * sgn * 3.5, p.y + Math.sin(p.angle) * sgn * 3.5, 4.5, 0.85);
+        hole(p.x + Math.cos(p.angle) * sgn * 6, p.y + Math.sin(p.angle) * sgn * 6, 5.5, 0.85);
       });
       for (const e of objects) {
         const k = D.protos[e.p].kind;
@@ -837,7 +873,7 @@
         ctx.font = '600 ' + Math.round(FG.clamp(T * 0.36, 11, 16)) + 'px "Barlow Semi Condensed", sans-serif';
         ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
         for (const e of list) {
-          if (D.protos[e.p].role !== 'stop') continue;
+          if (D.protos[e.p].kind !== 'trainstop') continue;
           const [sx, sy] = this.toScreen(e.x + 0.5, e.y);
           const w = ctx.measureText(e.name).width + 10;
           ctx.fillStyle = 'rgba(20,18,16,0.8)';
@@ -855,9 +891,15 @@
           const [ax, ay] = this.toScreen(p.x, p.y);
           ctx.save(); ctx.translate(ax, ay); ctx.rotate(p.angle);
           ctx.strokeStyle = k === i ? '#f0a830' : 'rgba(240,168,48,0.35)'; ctx.lineWidth = 2;
-          ctx.strokeRect(-T * 1.25, -T * 0.45, T * 2.5, T * 0.9);
+          const L = FG.trains.CAR_LEN, Wd = FG.trains.CAR_W;
+          ctx.strokeRect(-T * (L / 2 + 0.05), -T * (Wd / 2 + 0.05), T * (L + 0.1), T * (Wd + 0.1));
           ctx.restore();
         }
+      } else if (h && (h.rail || h.railGhost)) {
+        ctx.save();
+        this.worldTransform();
+        S.drawTrack(ctx, [(h.rail || h.railGhost).pc], T, { alpha: 0.25, tint: 'rgba(240,168,48,0.9)' });
+        ctx.restore();
       } else if (h && h.ent) {
         const e = h.ent;
         const [sx, sy] = this.toScreen(e.x, e.y);
@@ -883,9 +925,10 @@
         ctx.globalAlpha = 0.6;
         const [ax, ay] = this.toScreen(cp.x, cp.y);
         ctx.save(); ctx.translate(ax, ay); ctx.rotate(cp.angle);
-        S.paintCar(ctx, cp.type, T * FG.trains.CAR_LEN, T * 0.8, null);
+        const L = FG.trains.CAR_LEN, Wd = FG.trains.CAR_W;
+        S.paintCar(ctx, cp.type, T * L, T * Wd, null);
         ctx.fillStyle = cp.ok ? 'rgba(122,192,90,0.3)' : 'rgba(224,85,63,0.35)';
-        ctx.fillRect(-T * 1.2, -T * 0.4, T * 2.4, T * 0.8);
+        ctx.fillRect(-T * L / 2, -T * Wd / 2, T * L, T * Wd);
         ctx.restore();
         ctx.globalAlpha = 1;
       }
@@ -893,7 +936,7 @@
       const b = view.build;
       if (b) {
         for (const pv of b.previews) {
-          this.drawProtoPreview(pv.p, pv.x, pv.y, pv.dir, 0.6, pv.ok ? '#7ac05a' : '#e0553f', pv.mask);
+          this.drawProtoPreview(pv.p, pv.x, pv.y, pv.dir, 0.6, pv.ok ? '#7ac05a' : '#e0553f', pv.rd);
         }
         const pr = D.protos[b.p];
         const first = b.previews[0];
@@ -1061,7 +1104,7 @@
       const [sx, sy] = toM(e.x, e.y);
       if (sx > cw || sy > ch || sx < -10 || sy < -10) continue;
       const k = D.protos[e.p].kind;
-      ctx.fillStyle = k === 'rail' ? '#8a8078' : k === 'belt' || k === 'underground' || k === 'splitter' ? '#c8a040' : k === 'pole' ? '#7a8a9a' : k === 'pipe' || k === 'pipe_ug' ? '#6a8aa8' : k === 'turret' || k === 'laser' || k === 'wall' ? '#b0b0b0' : '#9ab0c8';
+      ctx.fillStyle = k === 'signal' || k === 'trainstop' ? '#8a8078' : k === 'belt' || k === 'underground' || k === 'splitter' ? '#c8a040' : k === 'pole' ? '#7a8a9a' : k === 'pipe' || k === 'pipe_ug' ? '#6a8aa8' : k === 'turret' || k === 'laser' || k === 'wall' ? '#b0b0b0' : '#9ab0c8';
       ctx.fillRect(sx, sy, Math.max(1, e.w * scale), Math.max(1, e.h * scale));
     }
     // Enemies (only in charted chunks)
@@ -1075,6 +1118,23 @@
       if (!w.charted[w.chunkIndexAt(u.x, u.y)]) continue;
       const [sx, sy] = toM(u.x, u.y);
       ctx.fillRect(sx - 1, sy - 1, 2, 2);
+    }
+    // Track
+    if (g.rail.pieces.size) {
+      ctx.save();
+      ctx.strokeStyle = '#8a8078';
+      ctx.lineWidth = Math.max(1.2, scale * 1.4);
+      ctx.beginPath();
+      for (const pc of g.rail.pieces.values()) {
+        const [ax, ay] = toM(pc.ax, pc.ay), [bx, by] = toM(pc.bx, pc.by);
+        const m = 10 * scale;
+        if ((ax < -m && bx < -m) || (ax > cw + m && bx > cw + m) || (ay < -m && by < -m) || (ay > ch + m && by > ch + m)) continue;
+        ctx.moveTo(ax, ay);
+        for (let i = 4; i < pc.pts.length - 1 && pc.t !== 'S'; i += 4) { const [x, y] = toM(pc.pts[i][0], pc.pts[i][1]); ctx.lineTo(x, y); }
+        ctx.lineTo(bx, by);
+      }
+      ctx.stroke();
+      ctx.restore();
     }
     // Trains
     ctx.fillStyle = '#ff8a3a';

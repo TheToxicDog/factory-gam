@@ -234,7 +234,7 @@
       }
       if (!best) {
         for (const e of this.g.ents.values()) {
-          if (D.protos[e.p].kind === 'rail') continue;
+          if (FG.rails.isSideKind(D.protos[e.p].kind)) continue;
           const d = FG.dist2(e.x, e.y, x, y);
           if (d < bd) { bd = d; best = e; }
         }
@@ -340,7 +340,7 @@
             // Look for something nearby to wreck.
             let best = null, bd = 18 * 18;
             FG.entsNear(g, u.x, u.y, 18, (e) => {
-              if (D.protos[e.p].kind === 'rail') return; // creatures ignore track
+              if (FG.rails.isSideKind(D.protos[e.p].kind)) return; // creatures ignore signals and stops
               const d = FG.dist2(e.x + e.w / 2, e.y + e.h / 2, u.x, u.y);
               if (d < bd) { bd = d; best = e; }
             });

@@ -9,6 +9,7 @@
     game: null,
     cursor: null,
     dir: 0,
+    railDir: 0,
     hotbar: new Array(10).fill(null),
     view: { hover: null, build: null, altMode: false, showPollution: false, select: null, mineTarget: null },
     paused: false,
@@ -39,7 +40,7 @@
     if (!g) return;
     const t = g.player.inv.totals();
     for (const id of Object.keys(t).sort((a, b) => D.items[a].order - D.items[b].order)) {
-      if (!D.items[id].place || app.hotbar.indexOf(id) >= 0) continue;
+      if (!(D.items[id].place || D.items[id].track) || app.hotbar.indexOf(id) >= 0) continue;
       const k = app.hotbar.indexOf(null);
       if (k < 0) return;
       app.hotbar[k] = id;

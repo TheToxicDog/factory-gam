@@ -4,6 +4,9 @@
   const D = FG.data;
   const BUILD_REACH = 12;
   const MINE_REACH = 5;
+  const RAIL_REACH = 20; // track pieces are long, so the planner reaches further
+  // Heading (0 = north, clockwise in eighths) closest to the vector (dx, dy).
+  const dir8 = (dx, dy) => Math.round((Math.atan2(dy, dx) + Math.PI / 2) / (Math.PI / 4)) & 7;
 
   class Input {
     constructor(app) {
@@ -106,6 +109,11 @@
         else this.warn('You have no ' + D.items[item].name);
         return;
       }
+      if (hv && hv.rail && !hv.ent) {
+        if (this.g.player.inv.count('rail') > 0) app.cursor = { item: 'rail' };
+        else this.warn('You have no rails');
+        return;
+      }
       const ent = hv && (hv.ent || hv.ghost);
       if (!ent) return;
       const item = D.protos[ent.p].item;
@@ -119,7 +127,8 @@
       const app = this.app;
       const c = app.cursor;
       if (c && c.bp) { app.cursor = { bp: rotateBlueprint(c.bp, reverse) }; app.blueprint = app.cursor.bp; return; }
-      if (c && c.item && D.items[c.item].place) { app.dir = (app.dir + (reverse ? 3 : 1)) & 3; return; }
+      if (c && c.item && D.items[c.item].track) { app.railDir = ((app.railDir || 0) + (reverse ? 7 : 1)) & 7; this.railCache = null; return; }
+      if (c && c.item && (D.items[c.item].place || D.items[c.item].car)) { app.dir = (app.dir + (reverse ? 3 : 1)) & 3; return; }
       const hv = app.view.hover;
       if (hv && hv.car) {
         if (hv.car.car.type !== 'loco') { this.warn('Only locomotives have a facing'); return; }
@@ -170,6 +179,7 @@
         if (e.shiftKey) { this.copySettings(); m.right = false; return; }
         const hv = app.view.hover;
         if (hv && hv.ghost && !hv.ent) { this.g.removeGhost(hv.ghost); m.right = false; }
+        else if (hv && hv.railGhost) { this.g.rail.ghosts.delete(hv.railGhost.pc.key); m.right = false; }
         return;
       }
       if (e.button !== 0) return;
@@ -185,6 +195,7 @@
       if (e.button === 2) m.right = false;
       if (e.button === 0) {
         m.left = false;
+        if (this.drag && this.drag.rail) this.railCommit();
         this.drag = null;
         const s = this.app.view.select;
         if (s) { this.finishSelect(s); this.app.view.select = null; this.mode = null; }
@@ -199,6 +210,8 @@
       if (c && c.item) {
         const it = D.items[c.item];
         if (it.car) { this.placeCar(c.item); return; }
+        if (it.track && hv && hv.railGhost) { this.buildRailGhost(hv.railGhost.pc); return; }
+        if (it.track) { this.railStart(); return; }
         if (hv && hv.car && !it.place) { this.insertIntoCar(hv.car, c.item, e.ctrlKey); return; }
         if (hv && hv.ent && (e.ctrlKey || !it.place)) { this.insertInto(hv.ent, c.item, e.ctrlKey); return; }
         if (it.place) { this.drag = { last: null, placed: [] }; this.dragBuild(); return; }
@@ -221,6 +234,7 @@
         app.ui.open('entity', e2);
         return;
       }
+      if (hv.railGhost) { this.buildRailGhost(hv.railGhost.pc); return; }
       if (hv.ghost) {
         const gh = hv.ghost;
         const item = D.protos[gh.p].item;
@@ -235,8 +249,8 @@
       const g = this.g;
       const m = this.mouse;
       if (!g.player.inv.count(itemId)) { this.warn('You have no ' + D.items[itemId].name); this.app.cursor = null; return; }
-      if (!this.inReach(m.tx + 0.5, m.ty + 0.5, BUILD_REACH)) { this.warn('Out of reach'); return; }
-      const r = FG.trains.placeCar(g, D.items[itemId].car, m.tx, m.ty, this.app.dir);
+      if (!this.inReach(m.wx, m.wy, BUILD_REACH)) { this.warn('Out of reach'); return; }
+      const r = FG.trains.placeCar(g, D.items[itemId].car, m.wx, m.wy, this.app.dir);
       if (!r.ok) { this.warn(r.reason); return; }
       g.player.inv.remove(itemId, 1);
       FG.emit('sound', 'place');
@@ -304,6 +318,12 @@
     // ---------------------------------------------------------- building
     previewFor(itemId, dir) {
       const pr = D.protos[D.items[itemId].place];
+      if (FG.rails.isSideKind(pr.kind)) {
+        // Signals and stops snap to the right-hand side of the nearest track.
+        const sn = FG.rails.snapSide(this.g, this.mouse.wx, this.mouse.wy);
+        if (sn) return { p: pr.id, x: sn.tx, y: sn.ty, dir: 0, fw: 1, fh: 1, rd: sn.pd };
+        return { p: pr.id, x: Math.floor(this.mouse.wx), y: Math.floor(this.mouse.wy), dir: 0, fw: 1, fh: 1, rd: this.app.railDir || 0, loose: true };
+      }
       let d = pr.rotatable ? dir : 0;
       const [fw0, fh0] = FG.footprint(pr, d);
       const x = Math.round(this.mouse.wx - fw0 / 2), y = Math.round(this.mouse.wy - fh0 / 2);
@@ -349,7 +369,6 @@
       }
       const ent = g.build(itemId, x, y, dir, settings);
       if (ent && pr.kind === 'underground' && ent.ug === 'out') this.app.dir = ent.dir;
-      if (ent && pr.kind === 'rail' && !chk.replace) FG.trains.autoConnect(g, ent, this.app.dir);
       if (!g.player.inv.count(itemId) && !g.bonus.drones) this.app.cursor = null;
       return ent;
     }
@@ -362,7 +381,14 @@
       const pv = this.previewFor(c.item, app.dir);
       const last = this.drag.last;
       if (last && last[0] === pv.x && last[1] === pv.y) return;
-      if (pr.id === 'rail') { this.dragRail(c, pv); return; }
+      if (FG.rails.isSideKind(pr.kind)) {
+        if (last) return;
+        this.drag.last = [pv.x, pv.y];
+        if (pv.loose) { this.warn('Place it beside a track'); return; }
+        const ent = this.tryBuild(c.item, pv.x, pv.y, 0, c.ghost, { rd: pv.rd });
+        if (ent) this.drag.placed.push(ent.id);
+        return;
+      }
       if (pr.kind === 'belt' && last) {
         // Walk tile by tile toward the mouse, turning belts to follow the drag.
         let [x, y] = last;
@@ -391,32 +417,73 @@
       this.drag.last = [pv.x, pv.y];
     }
 
-    // Rails join tile to tile along the drag path, so side-by-side tracks stay separate.
-    dragRail(c, pv) {
-      const g = this.g, app = this.app;
-      const last = this.drag.last;
-      if (!last) {
-        let e = FG.trains.railAt(g, pv.x, pv.y);
-        if (!e && g.player.inv.count(c.item)) e = this.tryBuild(c.item, pv.x, pv.y, 0, false);
-        this.drag.last = [pv.x, pv.y];
-        return;
+    // ------------------------------------------------------ rail planner
+    // Press on a rail point and drag: the planner lays straights, diagonals and curves
+    // (reusing existing track) to reach the point under the mouse. A click lays one piece.
+    // Click planned track: build it and the planned track joined to it, as far as you reach.
+    buildRailGhost(pc) {
+      const g = this.g, m = this.mouse;
+      const cost = FG.rails.itemCost(pc.t);
+      if (g.player.inv.count('rail') < cost) { this.warn('You need ' + cost + ' rail' + (cost > 1 ? 's' : '') + ' for this piece'); return; }
+      if (!this.inReach(m.wx, m.wy, RAIL_REACH)) { this.warn('Out of reach'); return; }
+      const n = g.buildGhostRun(pc, g.player.x, g.player.y, RAIL_REACH);
+      if (n) { FG.emit('sound', 'place'); if (n > 1) this.app.ui.toast('Laid ' + n + ' planned pieces', 'info'); }
+      else this.warn('Something is in the way');
+    }
+    railStart() {
+      const [x, y] = FG.rails.snapPoint(this.mouse.wx, this.mouse.wy);
+      this.drag = { rail: true, sx: x, sy: y };
+      this.railCache = null;
+    }
+    railPlanFor() {
+      const g = this.g, RL = FG.rails, app = this.app, R = g.rail;
+      const [tx, ty] = RL.snapPoint(this.mouse.wx, this.mouse.wy);
+      const d = this.drag && this.drag.rail ? this.drag : null;
+      const key = (d ? d.sx + ',' + d.sy + '>' : '') + tx + ',' + ty + ':' + app.railDir + ':' + R.nextPiece + ':' + R.pieces.size;
+      let plan = this.railCache && this.railCache.key === key ? this.railCache.plan : null;
+      if (!plan) {
+        let steps;
+        if (!d || (d.sx === tx && d.sy === ty)) {
+          // One straight piece: carry on from a dead end here, else use the chosen heading.
+          let h = app.railDir || 0;
+          for (let k = 0; k < 8; k++) if (R.out.has(RL.stateKey(tx, ty, RL.opp8(k))) && !R.out.has(RL.stateKey(tx, ty, k))) { h = k; break; }
+          steps = [{ ax: tx, ay: ty, ah: h, t: 'S' }];
+          steps.reached = true;
+        } else steps = RL.plan(g, RL.startsAt(g, d.sx, d.sy, dir8(tx - d.sx, ty - d.sy)), tx, ty);
+        const pieces = steps.map((st) => { const pc = RL.makePiece(st.ax, st.ay, st.ah, st.t); pc.exists = R.byKey.has(pc.key); return pc; });
+        const clear = pieces.every((pc) => pc.exists || RL.pieceClear(g, pc));
+        const need = pieces.reduce((n, pc) => n + (pc.exists ? 0 : RL.itemCost(pc.t)), 0);
+        plan = { pieces, need, reached: !!steps.reached && clear, point: [tx, ty] };
+        this.railCache = { key, plan };
       }
-      let [x, y] = last;
-      let guard = 0;
-      while ((x !== pv.x || y !== pv.y) && guard++ < 64) {
-        const dx = pv.x - x, dy = pv.y - y;
-        const d = Math.abs(dx) >= Math.abs(dy) ? (dx > 0 ? 1 : 3) : dy > 0 ? 2 : 0;
-        const prev = FG.trains.railAt(g, x, y);
-        x += FG.DX[d]; y += FG.DY[d];
-        app.dir = d;
-        let e = FG.trains.railAt(g, x, y);
-        if (!e) {
-          if (!app.cursor || !g.player.inv.count(c.item)) { this.warn('You have no more rails'); break; }
-          e = this.tryBuild(c.item, x, y, 0, false);
+      plan.ok = plan.reached && (g.player.inv.count('rail') >= plan.need || !!g.bonus.drones);
+      return plan;
+    }
+    railCommit() {
+      const g = this.g, RL = FG.rails, app = this.app;
+      const plan = this.railPlanFor();
+      this.railCache = null;
+      if (!plan.reached) { this.warn('Track cannot reach there'); return; }
+      const ghostOnly = app.cursor && app.cursor.ghost;
+      let built = 0, ghosts = 0, used = 0, stop = null;
+      for (const pc of plan.pieces) {
+        if (g.rail.byKey.has(pc.key)) continue;
+        const cost = RL.itemCost(pc.t);
+        const reach = this.inReach((pc.ax + pc.bx) / 2, (pc.ay + pc.by) / 2, RAIL_REACH);
+        if (!ghostOnly && reach && g.player.inv.count('rail') >= cost) {
+          if (g.buildRail(pc.ax, pc.ay, pc.ah, pc.t)) { built++; used += cost; continue; }
+          stop = 'Something is in the way'; break;
         }
-        if (prev && e) FG.trains.connect(g, prev, e);
+        // Out of reach or out of rails: leave the rest planned, to build later.
+        if (RL.addGhost(g, pc.ax, pc.ay, pc.ah, pc.t)) ghosts++;
       }
-      this.drag.last = [pv.x, pv.y];
+      if (built) FG.emit('sound', 'place');
+      const bits = [];
+      if (built) bits.push('laid ' + built + ' piece' + (built > 1 ? 's' : '') + ' (' + used + ' rails)');
+      if (ghosts) bits.push(ghosts + ' planned' + (g.bonus.drones ? ' for drones' : ': walk over and click them to build'));
+      if (bits.length > 0 && (built + ghosts > 1 || stop)) app.ui.toast(bits.join(' · ').replace(/^./, (ch) => ch.toUpperCase()), 'info');
+      if (stop) this.warn(stop);
+      if (!g.player.inv.count('rail') && !g.bonus.drones && !ghosts) app.cursor = null;
     }
 
     // --------------------------------------------------------- blueprints
@@ -431,17 +498,32 @@
         const gh = g.ghostAt(x, y);
         if (gh && s.mode !== 'copy') g.removeGhost(gh);
       }
+      const RL = FG.rails;
+      const inArea = (x, y) => x >= x0 && x <= x1 + 1 && y >= y0 && y <= y1 + 1;
+      const railsIn = Array.from(g.rail.pieces.values()).filter((pc) => inArea(pc.ax, pc.ay) && inArea(pc.bx, pc.by));
       if (s.mode === 'copy' || s.mode === 'cut') {
-        if (!inside.length) { app.ui.toast('No buildings in that area', 'warn'); return; }
-        const bx = Math.min(...inside.map((e) => e.x)), by = Math.min(...inside.map((e) => e.y));
-        const bw = Math.max(...inside.map((e) => e.x + e.w)) - bx, bh = Math.max(...inside.map((e) => e.y + e.h)) - by;
+        if (!inside.length && !railsIn.length) { app.ui.toast('No buildings in that area', 'warn'); return; }
+        const xs = [], ys = [], xe = [], ye = [];
+        for (const e of inside) { xs.push(e.x); ys.push(e.y); xe.push(e.x + e.w); ye.push(e.y + e.h); }
+        for (const pc of railsIn) { xs.push(pc.ax, pc.bx); ys.push(pc.ay, pc.by); xe.push(pc.ax, pc.bx); ye.push(pc.ay, pc.by); }
+        let bx = Math.min(...xs), by = Math.min(...ys), bw = Math.max(...xe) - bx, bh = Math.max(...ye) - by;
+        if (railsIn.length) {
+          // Track sits on a 2-tile grid, so keep the blueprint aligned to it.
+          const ex = Math.max(...xe), ey = Math.max(...ye);
+          bx = Math.floor(bx / 2) * 2; by = Math.floor(by / 2) * 2;
+          bw = Math.ceil((ex - bx) / 2) * 2; bh = Math.ceil((ey - by) / 2) * 2;
+        }
         const bp = {
           w: bw, h: bh,
-          ents: inside.map((e) => ({ p: e.p, dx: e.x - bx, dy: e.y - by, dir: e.dir, settings: { recipe: e.recipe || null, filter: e.filter, prio: e.prio, mask: e.mask, name: e.name } })),
+          ents: inside.map((e) => ({ p: e.p, dx: e.x - bx, dy: e.y - by, dir: e.dir, settings: { recipe: e.recipe || null, filter: e.filter, prio: e.prio, rd: e.rd, name: e.name } })),
+          rails: railsIn.map((pc) => [pc.ax - bx, pc.ay - by, pc.ah, pc.t]),
         };
         app.blueprint = bp;
         app.cursor = { bp };
-        app.ui.toast((s.mode === 'cut' ? 'Cut ' : 'Copied ') + inside.length + ' buildings · click to paste, R to rotate', 'good');
+        const what = [];
+        if (inside.length) what.push(inside.length + ' buildings');
+        if (railsIn.length) what.push(railsIn.length + ' pieces of track');
+        app.ui.toast((s.mode === 'cut' ? 'Cut ' : 'Copied ') + what.join(' and ') + ' · click to paste, R to rotate', 'good');
       }
       if (s.mode === 'cut' || s.mode === 'decon') {
         let picked = 0, marked = 0, left = 0;
@@ -460,15 +542,26 @@
           else if (g.bonus.drones) { e.decon = true; marked++; }
           else left++;
         }
+        const railsOut = s.mode === 'cut' ? railsIn : Array.from(g.rail.pieces.values()).filter((pc) => inArea((pc.ax + pc.bx) / 2, (pc.ay + pc.by) / 2));
+        let busy = 0;
+        for (const pc of railsOut) {
+          if (FG.trains.pieceUnderTrain(g, pc)) { busy++; continue; }
+          if (this.inReach((pc.ax + pc.bx) / 2, (pc.ay + pc.by) / 2, RAIL_REACH) && g.pickUpRail(pc)) picked++;
+          else if (g.bonus.drones) { pc.decon = true; marked++; }
+          else left++;
+        }
+        RL.removeGhostsIn(g, x0, y0, x1 + 1, y1 + 1);
         const bits = [];
         if (picked) bits.push('picked up ' + picked);
         if (marked) bits.push('drones will remove ' + marked);
         if (left) bits.push(left + ' out of reach');
+        if (busy) bits.push(busy + ' track under a train');
         if (bits.length) app.ui.toast(bits.join(' · ').replace(/^./, (c) => c.toUpperCase()), left ? 'warn' : 'info');
       }
     }
 
     blueprintAnchor(bp) {
+      if (bp.rails && bp.rails.length) return [Math.round((this.mouse.wx - bp.w / 2) / 2) * 2, Math.round((this.mouse.wy - bp.h / 2) / 2) * 2];
       return [Math.round(this.mouse.wx - bp.w / 2), Math.round(this.mouse.wy - bp.h / 2)];
     }
 
@@ -476,6 +569,16 @@
       const g = this.g;
       const [ax, ay] = this.blueprintAnchor(bp);
       let built = 0, ghosts = 0, skipped = 0;
+      const RL = FG.rails;
+      for (const [dx, dy, ah, t] of bp.rails || []) {
+        const x = ax + dx, y = ay + dy;
+        if (g.rail.byKey.has(RL.pieceKeyOf(x, y, ah, t))) continue;
+        const pc = RL.makePiece(x, y, ah, t);
+        if (!RL.pieceClear(g, pc)) { skipped++; continue; }
+        if (g.player.inv.count('rail') >= RL.itemCost(t) && this.inReach((pc.ax + pc.bx) / 2, (pc.ay + pc.by) / 2, RAIL_REACH)) {
+          if (g.buildRail(x, y, ah, t)) built++; else skipped++;
+        } else if (RL.addGhost(g, x, y, ah, t)) ghosts++;
+      }
       for (const b of bp.ents) {
         const x = ax + b.dx, y = ay + b.dy;
         const pr = D.protos[b.p];
@@ -513,51 +616,59 @@
         hv.car = FG.trains.carAtPoint(g, wx, wy);
         hv.ent = hv.car ? null : FG.entAt(g, m.tx, m.ty);
         if (!hv.ent && !hv.car) hv.ghost = g.ghostAt(m.tx, m.ty);
+        if (!hv.ent && !hv.car && !hv.ghost) hv.rail = FG.rails.pieceNear(g, wx, wy, 0.95);
+        if (!hv.ent && !hv.car && !hv.ghost && !hv.rail) hv.railGhost = FG.rails.ghostNear(g, wx, wy, 0.95);
         const i = m.ty * g.world.W + m.tx;
-        if (!hv.ent && !hv.car && g.world.res[i] && g.world.amt[i] > 0) hv.res = true;
+        if (!hv.ent && !hv.car && !hv.rail && g.world.res[i] && g.world.amt[i] > 0) hv.res = true;
       }
       view.hover = m.over ? hv : null;
       if (view.select) { view.select.x1 = m.tx; view.select.y1 = m.ty; }
       // Build preview.
       view.build = null;
+      view.railPlan = null;
       view.outOfReach = false;
       view.reach = BUILD_REACH;
       const c = app.cursor;
       if (m.over && c && c.bp && !view.select) {
         const [ax, ay] = this.blueprintAnchor(c.bp);
         view.build = {
-          p: c.bp.ents[0].p,
-          previews: c.bp.ents.map((b) => ({ p: b.p, x: ax + b.dx, y: ay + b.dy, dir: b.dir, mask: b.settings && b.settings.mask, ok: FG.canPlace(g, b.p, ax + b.dx, ay + b.dy, b.dir, { noReplace: true }).ok })),
+          p: c.bp.ents.length ? c.bp.ents[0].p : null,
+          previews: c.bp.ents.map((b) => ({ p: b.p, x: ax + b.dx, y: ay + b.dy, dir: b.dir, rd: b.settings && b.settings.rd, ok: FG.canPlace(g, b.p, ax + b.dx, ay + b.dy, b.dir, { noReplace: true }).ok })),
         };
+        if (c.bp.rails && c.bp.rails.length) {
+          const pieces = c.bp.rails.map(([dx, dy, ah, t]) => { const pc = FG.rails.makePiece(ax + dx, ay + dy, ah, t); pc.exists = g.rail.byKey.has(pc.key); return pc; });
+          view.railPlan = { pieces, ok: pieces.every((pc) => pc.exists || FG.rails.pieceClear(g, pc)) };
+        }
+      } else if (m.over && c && c.item && D.items[c.item].track && !view.select) {
+        view.railPlan = this.railPlanFor();
       } else if (m.over && c && c.item && D.items[c.item].place && !view.select) {
         const pv = this.previewFor(c.item, app.dir);
         const chk = FG.canPlace(g, pv.p, pv.x, pv.y, pv.dir);
         const reach = this.inReach(pv.x + pv.fw / 2, pv.y + pv.fh / 2, BUILD_REACH);
         const have = g.player.inv.count(c.item) > 0;
         view.outOfReach = !reach && !c.ghost;
-        view.build = { p: pv.p, previews: [{ p: pv.p, x: pv.x, y: pv.y, dir: pv.dir, ok: chk.ok && (reach || c.ghost) && (have || g.bonus.drones) }], showPoles: this.keys.has('ShiftLeft') || this.keys.has('ShiftRight') };
+        view.build = { p: pv.p, previews: [{ p: pv.p, x: pv.x, y: pv.y, dir: pv.dir, rd: pv.rd, ok: chk.ok && !pv.loose && (reach || c.ghost) && (have || g.bonus.drones) }], showPoles: this.keys.has('ShiftLeft') || this.keys.has('ShiftRight') };
         if (m.left && this.drag) this.dragBuild();
       }
       view.carPreview = null;
       if (m.over && c && c.item && D.items[c.item].car) {
-        const plan = FG.trains.planCar(g, m.tx, m.ty, app.dir);
-        let pose = { x: m.tx + 0.5, y: m.ty + 0.5, angle: (app.dir - 1) * Math.PI / 2 };
-        if (plan.ok && plan.tiles) {
-          const tmp = { tiles: plan.tiles.map((t) => Object.assign({}, t)), headS: 0 };
+        const TR = FG.trains;
+        const plan = TR.planCar(g, wx, wy, app.dir);
+        let pose = { x: wx, y: wy, angle: (app.dir - 1) * Math.PI / 2 };
+        if (plan.ok && plan.segs) {
           let s0 = 0;
-          for (const t of tmp.tiles) { t.len = t.hin === t.hout ? 1 : Math.PI / 4; t.s0 = s0; s0 += t.len; }
-          tmp.cars = [{}];
-          tmp.headS = s0 - FG.trains.GAP / 2;
-          pose = FG.trains.carPose(tmp, 0);
+          for (const sg of plan.segs) { sg.s0 = s0; s0 += sg.len; }
+          pose = TR.carPose({ segs: plan.segs, headS: plan.headS, cars: [{}] }, 0);
         } else if (plan.ok && plan.attach) {
-          const tr = plan.attach.train;
-          const sEnd = plan.attach.front ? tr.headS + FG.trains.PITCH : tr.headS - FG.trains.trainLen(tr) - FG.trains.GAP;
-          const a = FG.trains.pointAt(tr, sEnd - FG.trains.CAR_LEN), b = FG.trains.pointAt(tr, sEnd);
-          pose = { x: (a[0] + b[0]) / 2, y: (a[1] + b[1]) / 2, angle: Math.atan2(b[1] - a[1], b[0] - a[0]) };
+          // Just past the end of the train, continuing its heading.
+          const tr = plan.attach.train, front = plan.attach.front;
+          const p = TR.pointAt(tr, front ? tr.headS : tr.headS - TR.trainLen(tr));
+          const k = (front ? 1 : -1) * (TR.GAP + TR.CAR_LEN / 2);
+          pose = { x: p[0] + Math.cos(p[2]) * k, y: p[1] + Math.sin(p[2]) * k, angle: p[2] };
         }
         view.carPreview = Object.assign(pose, { type: D.items[c.item].car, ok: plan.ok });
       }
-      R.canvas.classList.toggle('cursor-build', !!(c && (c.bp || (c.item && (D.items[c.item].place || D.items[c.item].car)))) || !!this.mode);
+      R.canvas.classList.toggle('cursor-build', !!(c && (c.bp || (c.item && (D.items[c.item].place || D.items[c.item].car || D.items[c.item].track)))) || !!this.mode);
       view.showPoleAreas = false;
     }
 
@@ -587,6 +698,12 @@
           if (this.inReach(e.x + e.w / 2, e.y + e.h / 2, BUILD_REACH)) {
             inp.mine = { kind: 'ent', id: e.id, key: 'e' + e.id };
             app.view.mineTarget = { cx: e.x + e.w / 2, cy: e.y + e.h / 2 };
+          } else this.warn('Out of reach');
+        } else if (hv.rail) {
+          const pc = hv.rail.pc;
+          if (this.inReach(m.wx, m.wy, BUILD_REACH)) {
+            inp.mine = { kind: 'rail', pc, key: 'p' + pc.id };
+            app.view.mineTarget = { cx: m.wx, cy: m.wy };
           } else this.warn('Out of reach');
         } else if (hv.res) {
           const [x, y] = hv.tile;
@@ -621,10 +738,12 @@
         const [fw, fh] = FG.footprint(pr, b.dir);
         const rot = pr.rotatable || pr.w !== pr.h;
         let settings = b.settings;
-        if (settings && settings.mask !== undefined) settings = Object.assign({}, settings, { mask: ((settings.mask << 1) | (settings.mask >> 3)) & 15 });
+        if (settings && settings.rd !== undefined) settings = Object.assign({}, settings, { rd: (settings.rd + 2) & 7 });
         return { p: b.p, dx: cur.h - (b.dy + fh), dy: b.dx, dir: rot ? (b.dir + 1) & 3 : b.dir, settings };
       });
-      cur = { w: cur.h, h: cur.w, ents };
+      // A point (x, y) turns to (h - y, x); headings turn a quarter.
+      const rails = (cur.rails || []).map(([dx, dy, ah, t]) => [cur.h - dy, dx, (ah + 2) & 7, t]);
+      cur = { w: cur.h, h: cur.w, ents, rails };
     }
     return cur;
   }

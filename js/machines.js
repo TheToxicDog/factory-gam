@@ -55,10 +55,10 @@
       if (node) {
         if (!FG.belts.dropOn(node, b.id, e.dir)) break;
       } else {
-        const t = FG.entAt(g, e.ox, e.oy);
-        if (t && D.protos[t.p].kind === 'rail') {
-          const car = FG.trains.carAtTile(g, e.ox, e.oy);
-          if (!car || FG.trains.carInsert(car, b.id, 1) < 1) break;
+        const car = FG.trains.carAtTile(g, e.ox, e.oy);
+        const t = car ? null : FG.entAt(g, e.ox, e.oy);
+        if (car) {
+          if (FG.trains.carInsert(car, b.id, 1) < 1) break;
         } else if (!t || t === e || FG.insertItem(g, t, b.id, 1, 'direct') < 1) break;
       }
       b.n--;
@@ -277,12 +277,11 @@
   function srcAt(g, x, y) {
     const node = FG.belts.nodeAt(g, x, y);
     if (node) return { node };
+    // Arms reach into rail cars stopped on the track.
+    const car = FG.trains.carAtTile(g, x, y);
+    if (car) return { car };
     const ent = FG.entAt(g, x, y);
-    if (ent && D.protos[ent.p].kind === 'rail') {
-      // Arms reach into rail cars stopped on the track.
-      const car = FG.trains.carAtTile(g, x, y);
-      return car ? { car } : null;
-    }
+    if (ent && FG.rails.isSideKind(D.protos[ent.p].kind)) return null;
     return ent ? { ent } : null;
   }
 

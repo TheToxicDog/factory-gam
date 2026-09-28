@@ -50,10 +50,10 @@
     if (pr.kind === 'engine') return (e.out || 0) > 1 ? ['Generating', 'good'] : e.net ? ['Idle', ''] : ['Not connected to a pole', 'warn'];
     if (pr.kind === 'solar') return e.net ? ['Generating', 'good'] : ['Not connected to a pole', 'warn'];
     if (pr.kind === 'accumulator') return e.net ? ['Storing energy', 'good'] : ['Not connected to a pole', 'warn'];
-    if (pr.kind === 'rail') {
-      if (pr.role === 'stop') return ['Stop “' + e.name + '”', 'good'];
-      if (pr.role === 'rail') return null;
-      const st = FG.trains.blockState(FG.app.game, e.x, e.y);
+    if (pr.kind === 'trainstop') return e.attached ? ['Stop “' + e.name + '”', 'good'] : ['Not beside any track', 'bad'];
+    if (pr.kind === 'signal') {
+      const st = FG.trains.signalState(FG.app.game, e);
+      if (st === 'none') return e.attached ? ['No track beyond this signal', 'warn'] : ['Not beside any track', 'bad'];
       return st === 'free' ? ['Block clear', 'good'] : st === 'reserved' ? ['Block reserved by a train', 'warn'] : ['Block occupied', 'bad'];
     }
     if (pr.kind === 'chest' || pr.kind === 'wall' || pr.kind === 'pipe' || pr.kind === 'pipe_ug' || pr.kind === 'tank' || FG.isBeltKind(pr.kind)) return null;
@@ -324,10 +324,10 @@
       const c = app.cursor;
       let hand;
       if (!c) hand = '<b>Empty hand</b><div>Press E or a number key</div>';
-      else if (c.bp) hand = '<b>Blueprint</b><div>' + c.bp.ents.length + ' buildings · R rotate · Q clear</div>';
+      else if (c.bp) hand = '<b>Blueprint</b><div>' + c.bp.ents.length + ' buildings' + (c.bp.rails && c.bp.rails.length ? ' · ' + c.bp.rails.length + ' track' : '') + ' · R rotate · Q clear</div>';
       else {
         const n = p.inv.count(c.item);
-        hand = '<b>' + nameOf(c.item) + '</b><div>' + (c.ghost ? 'Ghost placement' : '<span class="num">' + n + '</span> in inventory') + ' · ' + (D.items[c.item].place && D.protos[D.items[c.item].place].rotatable ? 'R rotate · ' : '') + 'Q clear</div>';
+        hand = '<b>' + nameOf(c.item) + '</b><div>' + (c.ghost ? 'Ghost placement' : '<span class="num">' + n + '</span> in inventory') + ' · ' + (D.items[c.item].track ? 'Drag to lay track · R turns a single piece · ' : D.items[c.item].place && D.protos[D.items[c.item].place].rotatable ? 'R rotate · ' : '') + 'Q clear</div>';
       }
       if (this.$('hud-hand').dataset.k !== hand) { this.$('hud-hand').dataset.k = hand; this.$('hud-hand').innerHTML = hand; }
       // hotbar
@@ -371,7 +371,7 @@
       const el = this.$('hud-hover');
       const hv = this.app.view.hover;
       const g = this.g;
-      if (!hv || (!hv.ent && !hv.res && !hv.enemy && !hv.ghost && !hv.car) || this.win) { el.hidden = true; return; }
+      if (!hv || (!hv.ent && !hv.res && !hv.enemy && !hv.ghost && !hv.car && !hv.rail && !hv.railGhost) || this.win) { el.hidden = true; return; }
       const parts = [];
       if (hv.car) {
         const tr = hv.car.train, car = hv.car.car;
@@ -389,6 +389,19 @@
           else kv('Cargo', 'empty');
         }
         parts.push(h('div', { class: 'kv', style: 'margin-top:6px;font-size:12px' }, h('span', { text: 'Click to open · Enter to ride · R turns a stopped locomotive' })));
+      } else if (hv.rail) {
+        const pc = hv.rail.pc;
+        const kind = pc.t !== 'S' ? 'Curved rail' : pc.ah & 1 ? 'Diagonal rail' : 'Straight rail';
+        parts.push(h('h3', { text: kind }));
+        const busy = FG.trains.pieceUnderTrain(g, pc) ? 'A train is on it' : FG.trains.pieceReserved(g, pc) ? 'Reserved by a train' : 'Clear';
+        parts.push(h('div', { class: 'kv' }, h('span', { text: 'Worth' }), h('span', { class: 'num', text: FG.rails.itemCost(pc.t) + ' rail' + (FG.rails.itemCost(pc.t) > 1 ? 's' : '') })));
+        parts.push(h('div', { class: 'kv' }, h('span', { text: 'Track' }), h('span', { text: busy })));
+        parts.push(h('div', { class: 'kv', style: 'margin-top:6px;font-size:12px' }, h('span', { text: 'Right-click to pick up · Q to take rails in hand' })));
+      } else if (hv.railGhost) {
+        const pc = hv.railGhost.pc, n = FG.rails.itemCost(pc.t);
+        parts.push(h('h3', { text: 'Planned track' }));
+        parts.push(h('div', { class: 'kv' }, h('span', { text: 'Needs' }), h('span', { class: 'num', text: n + ' rail' + (n > 1 ? 's' : '') })));
+        parts.push(h('div', { class: 'kv', style: 'margin-top:6px;font-size:12px' }, h('span', { text: 'Click to build it and the planned track joined to it · right-click to cancel' })));
       } else if (hv.ent) {
         const e = hv.ent;
         const pr = D.protos[e.p];
@@ -899,22 +912,20 @@
         case 'wall':
           put(kvs([['Health', () => Math.ceil(ent.hp) + ' / ' + pr.hp]]));
           break;
-        case 'rail': {
-          if (pr.role === 'stop') {
+        case 'trainstop':
+        case 'signal': {
+          if (pr.kind === 'trainstop') {
             const input = h('input', { type: 'text', id: 'stop-name', value: ent.name, maxlength: '32', 'aria-label': 'Stop name', style: 'font:600 16px var(--font-ui)' });
             input.addEventListener('change', () => this.renameStop(ent, input.value));
             input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') input.blur(); });
             put(h('div', { class: 'group' }, h('label', { class: 'label', for: 'stop-name', text: 'Stop name' }), input),
               kvs([['Trains heading here', () => String(g.rail.trains.filter((t) => t.mode === 'auto' && t.schedule[t.cur] && t.schedule[t.cur].station === ent.name && t.state !== 'station').length)],
                 ['Trains stopped here', () => String(g.rail.trains.filter((t) => t.state === 'station' && t.schedule[t.cur] && t.schedule[t.cur].station === ent.name).length)]]),
-              h('div', { class: 'hint', text: 'Trains stop with their front at this tile. Stops with the same name share traffic: a train goes to the nearest one. Arms beside the track load and unload stopped wagons.' }));
-          } else if (pr.role === 'rail') {
-            put(kvs([['Connections', () => ['north', 'east', 'south', 'west'].filter((_, d) => ent.mask & (1 << d)).join(', ') || 'none']]),
-              h('div', { class: 'hint', text: 'Drag with rails in hand to lay track. Start a drag on existing track to branch off it. Picking up a piece removes its connections.' }));
+              h('div', { class: 'hint', text: 'Trains travelling this way (the stop is on their right) halt with their nose level with it. Stops with the same name share traffic: a train goes to the nearest one. Arms beside the track load and unload stopped wagons.' }));
           } else {
             put(h('div', { class: 'hint', text: pr.role === 'chain'
               ? 'A chain signal lets a train in only when it can also get through the next signal. Put them at the entrances of junctions so trains never stop inside one.'
-              : 'A rail signal splits the track into blocks. Only one automatic train may be in a block at a time; others wait before the signal.' }));
+              : 'A rail signal splits the track into blocks. Only one automatic train may be in a block at a time; others wait before the signal. Signals guard trains passing on their right: a track signalled on one side only is one-way.' }));
           }
           break;
         }
@@ -1452,7 +1463,7 @@
           h('li', { text: 'Machines show a badge when stuck: lightning for power, … for missing ingredients, ▲ for a full output.' }),
           h('li', { text: 'Pollution provokes the native hives. Put turrets and walls between your factory and them, and keep turrets fed with magazines.' }),
           h('li', { text: 'After researching Construction drones, blueprints and ghosts build themselves while you stand near them with the items.' }),
-          h('li', { text: 'Trains: drag rails to lay track, place named train stops, put a locomotive and wagons on the rails, fuel it and give it a schedule. Rail signals keep several trains on one network apart.' })));
+          h('li', { text: 'Trains: hold rails and drag from a point to where you want the track to go; the planner lays straights, diagonals and smooth curves on a 2-tile grid and joins existing track. Put named train stops beside the track, place a locomotive and wagons on it, fuel it and give it a schedule. Rail signals keep several trains on one network apart.' })));
       return w;
     }
 

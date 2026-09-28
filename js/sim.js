@@ -127,7 +127,7 @@
       if (kind === 'fluid') { this.dirty.fluid = true; return; }
       if (kind === 'fx') { this.dirty.fx = true; return; }
       if (kind === 'belt' || kind === 'underground' || kind === 'splitter') { this.dirty.belts = true; return; }
-      if (kind === 'rail') { this.rail.dirty = true; return; }
+      if (kind === 'signal' || kind === 'trainstop') { this.rail.dirty = true; return; }
       if (DIRTY_POWER[kind]) this.dirty.power = true;
       if (DIRTY_FLUID[kind]) this.dirty.fluid = true;
       if (DIRTY_FX[kind]) this.dirty.fx = true;
@@ -389,6 +389,7 @@
     // Mining time in ticks for the current target.
     mineTime(t) {
       if (t.kind === 'car') return 30;
+      if (t.kind === 'rail') return 12;
       if (t.kind === 'ent') {
         const pr = D.protos[this.ents.get(t.id).p];
         return pr.w * pr.h > 4 ? 30 : 15;
@@ -405,10 +406,12 @@
       if (!p.mining || p.mining.key !== t.key) p.mining = { key: t.key, prog: 0 };
       if (t.kind === 'ent' && !this.ents.get(t.id)) { p.mining = null; return; }
       if (t.kind === 'car' && !FG.trains.findCar(this, t.id)) { p.mining = null; return; }
+      if (t.kind === 'rail' && t.pc.dead) { p.mining = null; return; }
       p.mining.prog += 1 / this.mineTime(t);
       if (p.mining.prog < 1) return;
       p.mining.prog = 0;
       if (t.kind === 'car') this.pickUpCar(FG.trains.findCar(this, t.id));
+      else if (t.kind === 'rail') this.pickUpRail(t.pc);
       else if (t.kind === 'ent') this.pickUpEntity(this.ents.get(t.id));
       else this.mineTile(t.x, t.y);
     }
@@ -433,7 +436,6 @@
     }
     pickUpEntity(e) {
       if (!e) return false;
-      if (D.protos[e.p].kind === 'rail' && FG.trains.tileBusy(this, e.x, e.y)) { this.msg('A train is using this track', 'warn'); return false; }
       const items = FG.entityContents(this, e, true);
       if (!this.player.inv.canFit(items)) { this.msg('Not enough inventory space to pick that up', 'warn'); return false; }
       FG.removeEntity(this, e);
@@ -456,6 +458,53 @@
       FG.emit('sound', 'pickup');
       FG.emit('inventory');
       return true;
+    }
+    // Pick up a piece of track.
+    pickUpRail(pc) {
+      if (!pc || pc.dead) return false;
+      if (FG.trains.pieceUnderTrain(this, pc)) { this.msg('A train is standing on this track', 'warn'); return false; }
+      const n = FG.rails.itemCost(pc.t);
+      if (this.player.inv.space('rail') < n) { this.msg('Not enough inventory space to pick that up', 'warn'); return false; }
+      FG.rails.remove(this, pc);
+      this.player.inv.add('rail', n);
+      FG.emit('picked', 'rail', n, (pc.ax + pc.bx) / 2, (pc.ay + pc.by) / 2);
+      FG.emit('sound', 'pickup');
+      FG.emit('inventory');
+      return true;
+    }
+    // Lay a piece of track from the inventory. Returns the piece, or null.
+    buildRail(ax, ay, ah, t) {
+      const RL = FG.rails;
+      const key = RL.pieceKeyOf(ax, ay, ah, t);
+      if (this.rail.byKey.has(key)) return this.rail.byKey.get(key);
+      const n = RL.itemCost(t);
+      if (this.player.inv.count('rail') < n) return null;
+      const pc = RL.build(this, ax, ay, ah, t);
+      if (!pc) return null;
+      this.player.inv.remove('rail', n);
+      this.rail.ghosts.delete(key);
+      FG.emit('inventory');
+      return pc;
+    }
+    // Build planned track starting from one ghost piece and following connected ghosts,
+    // while within reach of (x, y) and while rails last. Returns the number built.
+    buildGhostRun(start, x, y, reach) {
+      const RL = FG.rails, G = this.rail.ghosts;
+      const todo = [start], seen = new Set([start.key]);
+      let n = 0;
+      while (todo.length) {
+        const pc = todo.shift();
+        if (!G.has(pc.key)) continue;
+        if (Math.hypot((pc.ax + pc.bx) / 2 - x, (pc.ay + pc.by) / 2 - y) > reach) continue;
+        if (this.player.inv.count('rail') < RL.itemCost(pc.t)) break;
+        if (!this.buildRail(pc.ax, pc.ay, pc.ah, pc.t)) continue;
+        n++;
+        for (const o of G.values()) {
+          if (seen.has(o.key)) continue;
+          if ((o.ax === pc.ax && o.ay === pc.ay) || (o.ax === pc.bx && o.ay === pc.by) || (o.bx === pc.ax && o.by === pc.ay) || (o.bx === pc.bx && o.by === pc.by)) { seen.add(o.key); todo.push(o); }
+        }
+      }
+      return n;
     }
     giveOrDrop(list) {
       let lost = false;
@@ -491,9 +540,9 @@
       }
       if (s.filter !== undefined && (pr.filter || pr.kind === 'splitter')) ent.filter = s.filter;
       if (s.prio !== undefined && pr.kind === 'splitter') ent.prio = s.prio;
-      if (pr.kind === 'rail') {
-        if (s.mask !== undefined) { ent.mask = s.mask; this.rail.dirty = true; }
-        if (s.name && pr.role === 'stop') ent.name = s.name;
+      if (FG.rails.isSideKind(pr.kind)) {
+        if (s.rd !== undefined) { ent.rd = s.rd; this.rail.dirty = true; }
+        if (s.name && pr.kind === 'trainstop') ent.name = s.name;
       }
     }
 
@@ -551,6 +600,30 @@
           FG.emit('inventory');
           return;
         }
+      }
+      // Planned track.
+      let bestRail = null;
+      bd = R * R;
+      const rails = this.player.inv.count('rail');
+      for (const pc of this.rail.ghosts.values()) {
+        const d = FG.dist2((pc.ax + pc.bx) / 2, (pc.ay + pc.by) / 2, p.x, p.y);
+        if (d < bd && rails >= FG.rails.itemCost(pc.t)) { bd = d; bestRail = pc; }
+      }
+      if (bestRail) {
+        const pc = bestRail;
+        if (this.buildRail(pc.ax, pc.ay, pc.ah, pc.t)) {
+          this.effects.push({ type: 'drone', x0: p.x, y0: p.y, x1: (pc.ax + pc.bx) / 2, y1: (pc.ay + pc.by) / 2, t: 0, life: 20 });
+          return;
+        }
+        this.rail.ghosts.delete(pc.key);
+      }
+      for (const pc of this.rail.pieces.values()) {
+        if (!pc.decon) continue;
+        const cx = (pc.ax + pc.bx) / 2, cy = (pc.ay + pc.by) / 2;
+        if (FG.dist2(cx, cy, p.x, p.y) > R * R) continue;
+        if (this.pickUpRail(pc)) this.effects.push({ type: 'drone', x0: cx, y0: cy, x1: p.x, y1: p.y, t: 0, life: 20 });
+        else pc.decon = false;
+        return;
       }
       for (const e of this.ents.values()) {
         if (!e.decon) continue;

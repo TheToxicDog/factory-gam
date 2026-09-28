@@ -455,92 +455,106 @@
   }
 
   // --------------------------------------------------------------- rails
-  // Track tile for a connection mask (bit d = joined toward direction d).
-  function paintRail(ctx, T, mask) {
-    const bits = [0, 1, 2, 3].filter((d) => mask & (1 << d));
-    const curve = bits.length === 2 && (bits[0] + bits[1]) % 2 === 1;
-    const c = T / 2;
-    ctx.save();
-    const gravel = '#6f675f', gravelHi = '#857c72', tie = '#4a3524', rail = '#a7b0b8', railDark = '#2c2f33';
-    if (curve) {
-      // Pivot on the inner corner shared by both connected edges.
-      const [a, b] = bits;
-      const px = c + (FG.DX[a] + FG.DX[b]) * c, py = c + (FG.DY[a] + FG.DY[b]) * c;
-      const ang = (d) => Math.atan2(c + FG.DY[d] * c - py, c + FG.DX[d] * c - px);
-      let a0 = ang(a), a1 = ang(b);
-      let da = a1 - a0;
-      while (da > Math.PI) da -= Math.PI * 2;
-      while (da < -Math.PI) da += Math.PI * 2;
-      const arc = (r, w, col) => { ctx.strokeStyle = col; ctx.lineWidth = w; ctx.beginPath(); ctx.arc(px, py, r, a0, a0 + da, da < 0); ctx.stroke(); };
-      arc(c, T * 0.84, gravel);
-      arc(c, T * 0.6, gravelHi);
-      ctx.strokeStyle = tie; ctx.lineWidth = T * 0.1;
-      for (let k = 0; k <= 4; k++) {
-        const t = a0 + (da * (k + 0.5)) / 5;
-        ctx.beginPath();
-        ctx.moveTo(px + Math.cos(t) * (c - T * 0.4), py + Math.sin(t) * (c - T * 0.4));
-        ctx.lineTo(px + Math.cos(t) * (c + T * 0.4), py + Math.sin(t) * (c + T * 0.4));
-        ctx.stroke();
-      }
-      for (const r of [c - T * 0.22, c + T * 0.22]) { arc(r, T * 0.1, railDark); arc(r, T * 0.06, rail); }
-      ctx.restore();
-      return;
+  // Track is drawn in world units (ctx scaled so 1 unit = 1 tile) from each piece's
+  // centre line: ballast, sleepers, then two steel rails.
+  const GAUGE = 0.6;
+  function trackArt(pc) {
+    if (pc.art) return pc.art;
+    const n = pc.t === 'S' ? 1 : pc.pts.length - 1;
+    const left = [], right = [];
+    const p = [0, 0, 0];
+    for (let i = 0; i <= n; i++) {
+      FG.rails.posAt(pc, (pc.len * i) / n, true, p);
+      const nx = -Math.sin(p[2]), ny = Math.cos(p[2]);
+      left.push([p[0] + nx * GAUGE, p[1] + ny * GAUGE]);
+      right.push([p[0] - nx * GAUGE, p[1] - ny * GAUGE]);
     }
-    const segs = bits.length ? bits : [];
+    const ties = [];
+    const k = Math.max(1, Math.round(pc.len / 0.5));
+    for (let i = 0; i < k; i++) {
+      FG.rails.posAt(pc, ((i + 0.5) * pc.len) / k, true, p);
+      const nx = -Math.sin(p[2]) * 0.82, ny = Math.cos(p[2]) * 0.82;
+      ties.push([p[0] + nx, p[1] + ny, p[0] - nx, p[1] - ny]);
+    }
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const [x, y] of pc.pts) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
+    pc.art = { left, right, ties, box: [x0 - 1.2, y0 - 1.2, x1 + 1.2, y1 + 1.2] };
+    return pc.art;
+  }
+  S.trackBox = (pc) => trackArt(pc).box;
+  const polyline = (ctx, pts) => { ctx.moveTo(pts[0][0], pts[0][1]); for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]); };
+  const centre = (ctx, pc) => { ctx.moveTo(pc.pts[0][0], pc.pts[0][1]); for (let i = 1; i < pc.pts.length; i++) ctx.lineTo(pc.pts[i][0], pc.pts[i][1]); };
+
+  // Draw pieces. ctx must map world units to pixels; px is pixels per tile.
+  // opts: { tint, alpha, ends: [[x, y, heading], ...] buffer stops }
+  S.drawTrack = function (ctx, pieces, px, opts) {
+    opts = opts || {};
+    if (!pieces.length) return;
+    ctx.save();
     ctx.lineCap = 'butt';
-    const seg = (d, w, col, off) => {
-      const nx = -FG.DY[d], ny = FG.DX[d];
+    ctx.lineJoin = 'round';
+    if (opts.alpha !== undefined) ctx.globalAlpha = opts.alpha;
+    const stroke = (w, col, fn) => {
       ctx.strokeStyle = col; ctx.lineWidth = w;
       ctx.beginPath();
-      const startBack = bits.length === 1 || (bits.length === 2 && !curve) ? 0 : 0;
-      ctx.moveTo(c + nx * off - FG.DX[d] * startBack, c + ny * off - FG.DY[d] * startBack);
-      ctx.lineTo(c + FG.DX[d] * c + nx * off, c + FG.DY[d] * c + ny * off);
+      for (const pc of pieces) fn(pc);
       ctx.stroke();
     };
-    // Ballast bed
-    ctx.fillStyle = gravel;
-    ctx.fillRect(c - T * 0.42, c - T * 0.42, T * 0.84, T * 0.84);
-    for (const d of segs) seg(d, T * 0.84, gravel, 0);
-    for (const d of segs) seg(d, T * 0.6, gravelHi, 0);
-    if (!segs.length) { ctx.fillStyle = gravelHi; ctx.fillRect(c - T * 0.3, c - T * 0.3, T * 0.6, T * 0.6); }
-    // Sleepers
-    ctx.fillStyle = tie;
-    for (const d of segs) {
-      for (let k = 0; k < 2; k++) {
-        const along = T * (0.12 + k * 0.25);
-        const x = c + FG.DX[d] * along, y = c + FG.DY[d] * along;
-        if (FG.DX[d]) ctx.fillRect(x - T * 0.05, y - T * 0.4, T * 0.1, T * 0.8);
-        else ctx.fillRect(x - T * 0.4, y - T * 0.05, T * 0.8, T * 0.1);
-      }
+    stroke(1.8, '#5f5850', (pc) => centre(ctx, pc));
+    stroke(1.4, '#7a7168', (pc) => centre(ctx, pc));
+    const fine = px >= 12;
+    if (fine) stroke(0.2, '#4a3524', (pc) => { for (const t of trackArt(pc).ties) { ctx.moveTo(t[0], t[1]); ctx.lineTo(t[2], t[3]); } });
+    const rails = (pc) => { const a = trackArt(pc); polyline(ctx, a.left); polyline(ctx, a.right); };
+    stroke(fine ? 0.2 : Math.max(0.2, 1.5 / px), '#2c2f33', rails);
+    if (fine) stroke(0.1, '#a7b0b8', rails);
+    if (opts.tint) {
+      ctx.globalAlpha = 1;
+      stroke(0.35, opts.tint, (pc) => centre(ctx, pc));
     }
-    // Steel rails
-    for (const [w, col] of [[T * 0.1, railDark], [T * 0.06, rail]]) {
-      for (const d of segs) { seg(d, w, col, T * 0.22); seg(d, w, col, -T * 0.22); }
-      if (segs.length >= 2) {
-        // Short joints through the centre so junctions look continuous.
-        ctx.strokeStyle = col; ctx.lineWidth = w;
-        for (const off of [T * 0.22, -T * 0.22]) {
-          ctx.beginPath();
-          ctx.moveTo(c + off, c - T * 0.22); ctx.lineTo(c + off, c + T * 0.22);
-          ctx.moveTo(c - T * 0.22, c + off); ctx.lineTo(c + T * 0.22, c + off);
-          ctx.stroke();
-        }
-      }
-    }
-    if (segs.length === 1) {
-      // Buffer stop at a dead end.
-      const d = FG.opposite(segs[0]);
-      const x = c + FG.DX[d] * T * 0.05, y = c + FG.DY[d] * T * 0.05;
-      ctx.fillStyle = '#b8342a';
-      if (FG.DX[d]) ctx.fillRect(x - T * 0.08, y - T * 0.34, T * 0.16, T * 0.68);
-      else ctx.fillRect(x - T * 0.34, y - T * 0.08, T * 0.68, T * 0.16);
-      ctx.fillStyle = '#f0e0c0';
-      if (FG.DX[d]) ctx.fillRect(x - T * 0.08, y - T * 0.06, T * 0.16, T * 0.12);
-      else ctx.fillRect(x - T * 0.06, y - T * 0.08, T * 0.12, T * 0.16);
+    if (opts.ends) for (const [x, y, h] of opts.ends) {
+      const u = FG.rails.unit(h), nx = -u[1], ny = u[0];
+      const cx = x - u[0] * 0.25, cy = y - u[1] * 0.25;
+      ctx.strokeStyle = '#b8342a'; ctx.lineWidth = 0.3;
+      ctx.beginPath(); ctx.moveTo(cx + nx * 0.75, cy + ny * 0.75); ctx.lineTo(cx - nx * 0.75, cy - ny * 0.75); ctx.stroke();
+      ctx.strokeStyle = '#f0e0c0'; ctx.lineWidth = 0.3;
+      ctx.beginPath(); ctx.moveTo(cx + nx * 0.12, cy + ny * 0.12); ctx.lineTo(cx - nx * 0.12, cy - ny * 0.12); ctx.stroke();
     }
     ctx.restore();
-  }
-  S.paintRail = paintRail;
+  };
+
+  // Signal post on a 1x1 tile at (x, y) px, guarding travel heading rd.
+  S.paintSignal = function (ctx, T, role, rd, lamp) {
+    ctx.save();
+    ctx.translate(T / 2, T / 2);
+    ctx.rotate((rd * Math.PI) / 4);
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    rr(ctx, -T * 0.16, -T * 0.26, T * 0.36, T * 0.6, T * 0.08); ctx.fill();
+    ctx.fillStyle = '#2c2f33';
+    rr(ctx, -T * 0.2, -T * 0.3, T * 0.4, T * (role === 'chain' ? 0.62 : 0.46), T * 0.08); ctx.fill();
+    circle(ctx, 0, -T * 0.16, T * 0.12, lamp || '#7ac05a');
+    if (role === 'chain') circle(ctx, 0, T * 0.14, T * 0.1, '#58a6d8');
+    ctx.restore();
+  };
+  // Train stop beside the track: a platform edge along the rails and an upright sign.
+  S.paintStop = function (ctx, T, rd) {
+    ctx.save();
+    ctx.translate(T / 2, T / 2);
+    ctx.save();
+    ctx.rotate((rd * Math.PI) / 4);
+    ctx.fillStyle = '#6a655c';
+    ctx.fillRect(-T * 0.5, -T * 0.45, T * 0.3, T * 0.9);
+    hazard(ctx, -T * 0.5, -T * 0.45, T * 0.12, T * 0.9, T * 0.08);
+    ctx.restore();
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    ctx.fillRect(T * 0.02, -T * 0.16, T * 0.12, T * 0.56);
+    ctx.fillStyle = '#3a3e44';
+    ctx.fillRect(-T * 0.05, -T * 0.2, T * 0.1, T * 0.58);
+    rr(ctx, -T * 0.34, -T * 0.46, T * 0.68, T * 0.34, T * 0.06);
+    ctx.fillStyle = '#e08a2a'; ctx.fill();
+    ctx.fillStyle = '#2a2622';
+    ctx.fillRect(-T * 0.22, -T * 0.34, T * 0.44, T * 0.09);
+    ctx.restore();
+  };
 
   // Rail car body, drawn along +x with the car's front at +x. len/wid in pixels.
   S.paintCar = function (ctx, type, len, wid, cargoIcon) {
@@ -611,17 +625,6 @@
     return s;
   };
 
-  S.rail = function (mask) {
-    const k = 'rail:' + mask;
-    let s = cache.get(k);
-    if (s) return s;
-    const c = makeCanvas(S.T, S.T);
-    paintRail(c.getContext('2d'), S.T, mask);
-    s = { canvas: c, pad: 0 };
-    cache.set(k, s);
-    return s;
-  };
-
   S.belt = function (tier, shape, dir, frame) {
     const key = 'belt' + tier + ':' + shape + ':' + dir + ':' + frame;
     let s = cache.get(key);
@@ -660,11 +663,8 @@
       paintSplitterBody(ctx, T, pr.tier);
       return;
     }
-    if (pr.kind === 'rail') {
-      paintRail(ctx, T, 5);
-      if (pr.role !== 'rail') S.paintRailMark(ctx, pr.role, T, 0, 0, pr.role === 'stop' ? '#f0a830' : '#7ac05a');
-      return;
-    }
+    if (pr.kind === 'signal') { S.paintSignal(ctx, T, pr.role, 0, '#7ac05a'); return; }
+    if (pr.kind === 'trainstop') { S.paintStop(ctx, T, 0); return; }
     if (pr.kind === 'pipe') {
       ctx.save();
       ctx.lineCap = 'round';
@@ -689,25 +689,6 @@
     }
     const painter = P[pr.id] || P[pr.kind];
     if (painter) painter(ctx, T, pr);
-  };
-
-  // Stop platform or signal post drawn over a rail tile at (x, y) with size T.
-  S.paintRailMark = function (ctx, role, T, x, y, lamp) {
-    ctx.save();
-    ctx.translate(x, y);
-    if (role === 'stop') {
-      hazard(ctx, T * 0.02, T * 0.02, T * 0.96, T * 0.14, T * 0.08);
-      ctx.fillStyle = '#3a3e44';
-      ctx.fillRect(T * 0.8, T * 0.1, T * 0.1, T * 0.34);
-      rr(ctx, T * 0.66, T * 0.02, T * 0.32, T * 0.2, T * 0.04); ctx.fill();
-      circle(ctx, T * 0.82, T * 0.12, T * 0.06, lamp || '#f0a830');
-    } else {
-      ctx.fillStyle = '#2c2f33';
-      rr(ctx, T * 0.74, T * 0.02, T * 0.24, role === 'chain' ? T * 0.44 : T * 0.28, T * 0.06); ctx.fill();
-      circle(ctx, T * 0.86, T * 0.14, T * 0.08, lamp || '#7ac05a');
-      if (role === 'chain') circle(ctx, T * 0.86, T * 0.33, T * 0.07, '#58a6d8');
-    }
-    ctx.restore();
   };
 
   S.paintTurretHead = function (ctx, pr, cx, cy, angle, T) {

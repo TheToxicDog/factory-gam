@@ -75,7 +75,7 @@
   item('big_pole', 'Pylon', 'logistics', 'power', { place: 'big_pole' });
   item('pipe', 'Pipe', 'logistics', 'fluid', { stack: 100, place: 'pipe' });
   item('pipe_ug', 'Tunnel pipe', 'logistics', 'fluid', { place: 'pipe_ug' });
-  item('rail', 'Rail', 'logistics', 'rail', { stack: 100, place: 'rail' });
+  item('rail', 'Rail', 'logistics', 'rail', { stack: 100, track: true });
   item('train_stop', 'Train stop', 'logistics', 'rail', { stack: 10, place: 'train_stop' });
   item('rail_signal', 'Rail signal', 'logistics', 'rail', { place: 'rail_signal' });
   item('chain_signal', 'Chain signal', 'logistics', 'rail', { place: 'chain_signal' });
@@ -293,11 +293,10 @@
 
   proto('pipe', 'pipe', { hp: 100, fb: [{ cap: 100, io: 'both', conns: ALL4 }] });
   proto('pipe_ug', 'pipe_ug', { hp: 150, maxDist: 10, rotatable: true, fb: [{ cap: 100, io: 'both', conns: [[0, 0, 0]] }] });
-  // Rails connect only where track was laid (mask bits); stops and signals are rail pieces too.
-  proto('rail', 'rail', { hp: 200, solid: false, role: 'rail' });
-  proto('train_stop', 'rail', { hp: 250, solid: false, role: 'stop' });
-  proto('rail_signal', 'rail', { hp: 150, solid: false, role: 'signal' });
-  proto('chain_signal', 'rail', { hp: 150, solid: false, role: 'chain' });
+  // Track itself is not a building (see rails.js); stops and signals stand beside it.
+  proto('train_stop', 'trainstop', { hp: 250, solid: false });
+  proto('rail_signal', 'signal', { hp: 150, solid: false, role: 'signal' });
+  proto('chain_signal', 'signal', { hp: 150, solid: false, role: 'chain' });
 
   proto('offshore_pump', 'offshore', { rate: 1200, rotatable: true, hp: 150, fb: [{ cap: 100, io: 'out', filter: 'water', conns: [[0, 0, 0]] }] });
   proto('boiler', 'boiler', {
@@ -392,7 +391,7 @@
   tech('power_distribution', 'Power distribution', RG, 120, 15, ['steel', 'logistic_science'], ['medium_pole', 'big_pole']);
   tech('solar', 'Solar energy', RG, 100, 15, ['steel', 'logistic_science'], ['solar_panel']);
   tech('railway', 'Railway', RG, 75, 30, ['logistics_2', 'engine'], ['rail', 'locomotive', 'cargo_wagon', 'train_stop'], {
-    desc: 'Lay track by dragging. Trains follow schedules between named stops; arms load and unload stopped wagons.',
+    desc: 'Drag with rails to lay track: the planner curves it for you. Trains follow schedules between named stops; arms load and unload stopped wagons.',
   });
   tech('rail_signals', 'Rail signals', RG, 100, 30, ['railway'], ['rail_signal', 'chain_signal'], {
     desc: 'Signals split track into blocks that hold one train each. Chain signals let a train through only if it can clear the next block too.',

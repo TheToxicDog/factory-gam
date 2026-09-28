@@ -169,10 +169,11 @@
       case 'uplink': ent.recipe = 'uplink_stage'; ent.inp = {}; ent.out = {}; ent.prog = 0; ent.crafting = false; ent.stages = 0; ent.satellite = 0; ent.launch = 0; break;
       case 'lab': ent.inp = {}; ent.prog = 0; ent.working = false; break;
       case 'accumulator': ent.charge = 0; break;
-      case 'rail':
-        ent.mask = ent.mask || 0;
-        if (pr.role === 'stop' && !ent.name) ent.name = 'Stop ' + ++g.rail.stopCounter;
+      case 'trainstop':
+        ent.rd = ent.rd || 0;
+        if (!ent.name) ent.name = 'Stop ' + ++g.rail.stopCounter;
         break;
+      case 'signal': ent.rd = ent.rd || 0; break;
       case 'turret': ent.ammo = null; ent.rounds = 0; ent.cd = 0; ent.angle = -Math.PI / 2; ent.target = null; break;
       case 'laser': ent.buf = 0; ent.cd = 0; ent.angle = -Math.PI / 2; ent.target = null; break;
     }
@@ -223,7 +224,7 @@
   }
 
   // ----------------------------------------------------------- placement
-  const REPLACE_GROUPS = { belt: 'belt', underground: 'underground', splitter: 'splitter', inserter: 'inserter', chest: 'chest', pole: 'pole', rail: 'rail' };
+  const REPLACE_GROUPS = { belt: 'belt', underground: 'underground', splitter: 'splitter', inserter: 'inserter', chest: 'chest', pole: 'pole', signal: 'signal' };
   function replaceGroup(pr) {
     if (REPLACE_GROUPS[pr.kind]) return REPLACE_GROUPS[pr.kind];
     if (pr.kind === 'crafter' && pr.cats.indexOf('crafting') >= 0) return 'assembler';
@@ -243,6 +244,7 @@
         if (!world.inBounds(xx, yy)) return { ok: false, reason: 'Out of bounds' };
         if (world.isWater(xx, yy)) return { ok: false, reason: 'Cannot build on water' };
         if (world.hasObstacle(xx, yy)) return { ok: false, reason: 'Blocked by a tree or boulder' };
+        if (!FG.rails.isSideKind(pr.kind) && FG.rails.tileHasRail(g, xx, yy)) return { ok: false, reason: 'Track is in the way' };
         const other = FG.entAt(g, xx, yy);
         if (other) {
           const op = D.protos[other.p];
@@ -328,7 +330,6 @@
 
   FG.removeEntity = function (g, ent) {
     unregister(g, ent);
-    if (D.protos[ent.p].kind === 'rail') FG.trains.onRailRemoved(g, ent);
     FG.emit('removed', ent);
   };
 
@@ -338,7 +339,7 @@
     const op = D.protos[old.p];
     const leftovers = [];
     const keep = {};
-    for (const k of ['inv', 'recipe', 'inp', 'out', 'fuel', 'energy', 'filter', 'modules', 'lanes', 'halves', 'toggle', 'prio', 'hand', 'st', 't', 'ug', 'prog', 'crafting', 'bonus', 'mask', 'name']) {
+    for (const k of ['inv', 'recipe', 'inp', 'out', 'fuel', 'energy', 'filter', 'modules', 'lanes', 'halves', 'toggle', 'prio', 'hand', 'st', 't', 'ug', 'prog', 'crafting', 'bonus', 'rd', 'name']) {
       if (old[k] !== undefined) keep[k] = old[k];
     }
     unregister(g, old);

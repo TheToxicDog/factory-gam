@@ -20,6 +20,8 @@ A keyboard and mouse are required.
 | Mine resources / pick up buildings | Hold right-click |
 | Open a machine | Left-click |
 | Place the held item (drag for lines of belts) | Left-click |
+| Lay track: the planner curves it to reach the point | Hold rails, drag from a rail point |
+| Get in or out of a train | Enter (then W go, S brake or reverse, A/D pick a branch) |
 | Put the held item into a machine (fuel, ore, ammo) | Left-click the machine |
 | Rotate | R (Shift+R reverses) |
 | Clear hand, or copy the hovered building into your hand | Q |
@@ -44,8 +46,9 @@ A keyboard and mouse are required.
 3. **Electricity:** water pump → boiler → steam engines, carried by poles. Electric drills, arms and assemblers.
 4. **Research:** labs consume research packs your factory makes. There are five tiers: Mechanics, Logistics, Defense, Chemistry and Industry.
 5. **Chemistry:** pumpjacks, refineries and chemical plants turn crude oil into plastic, sulfur, acid, lubricant and rocket fuel. Advanced refining produces byproducts you have to deal with.
-6. **Optimization:** modules, beacons, faster belts, arc furnaces, solar fields and accumulators.
-7. **Endgame:** build the Orbital Uplink, then feed it 40 stages of composite frames, guidance computers and rocket fuel. Load a Survey satellite and launch.
+6. **Railways:** lay track with the rail planner, name train stops, and send locomotives with cargo wagons between your mines and smelters on schedules. Signals let many trains share the network.
+7. **Optimization:** modules, beacons, faster belts, arc furnaces, solar fields and accumulators.
+8. **Endgame:** build the Orbital Uplink, then feed it 40 stages of composite frames, guidance computers and rocket fuel. Load a Survey satellite and launch.
 
 Guided objectives in the top-left walk you through the arc.
 
@@ -57,7 +60,9 @@ Guided objectives in the top-left walk you through the arc.
 - **Power networks** are built from poles. Steam engines draw from shared steam networks. Solar output follows the day/night cycle, and accumulators buffer the difference. When demand exceeds supply, every machine slows down.
 - **Fluids** pool across connected pipes and machines. Each network holds one fluid. A full output blocks the machine, which is what makes oil byproducts a puzzle.
 - **Pollution** spreads between 32×32 chunks and is absorbed by terrain and forests. When it reaches a hive, the hive gathers an attack wave that pathfinds (A*) to your polluting buildings. Hive evolution rises with time, pollution and destroyed hives, bringing crawlers, brutes, titans and colossi. Defend with turrets, laser turrets and walls, or play with Peaceful or no enemies.
-- **Blueprints** copy, cut and paste areas. After you research Construction drones, ghosts build themselves from your inventory while you are nearby.
+- **Railways** follow Factorio's rail grid. Track runs between rail points on a 2-tile grid in eight directions: straight pieces, diagonal pieces, and curved pieces that bend 45° as a wide arc (radius about 9.7 tiles) and cost 4 rails. Two curves make a smooth 90° turn over 12×12 tiles. Drag with rails in hand and the planner (A* over rail states) lays straights, diagonals and curves to reach the point under the mouse, joining existing track and avoiding buildings. Track beyond your reach, or beyond the rails you carry, is left planned; click it to build it, or let drones do it.
+- **Trains** are locomotives and cargo wagons riding the track. They only drive the way a locomotive faces, so a line with a stop at each end needs a locomotive at each end (or a loop). A stop serves trains passing with the stop on their right. Schedules wait for a time, full or empty cargo, or inactivity. Arms load and unload stopped wagons. Rail signals split track into blocks that hold one train each; a track signalled on one side only is one-way; chain signals keep trains out of a junction until they can get through it. You can ride and drive a train yourself.
+- **Blueprints** copy, cut and paste areas, including track (kept on the rail grid). After you research Construction drones, ghosts build themselves from your inventory while you are nearby.
 - **Saves** go to browser storage as gzip. There are three slots plus an autosave every 3 minutes (and whenever you quit or start another game). You can also export or import a save code to move a game between browsers.
 
 ## Project layout
@@ -75,6 +80,8 @@ js/power.js       electric networks, generation and demand
 js/machines.js    drills, furnaces, assemblers, labs, boilers, pumps, arms, modules
 js/combat.js      pollution spread, hives, attack waves, turrets, weapons
 js/objectives.js  guided objectives
+js/rails.js       rail geometry (2-tile grid, curves), track network, planner, signal blocks
+js/trains.js      trains: cars, reservations, signals, pathfinding, schedules, driving
 js/sim.js         game state, research, hand crafting, player, drones, fixed-rate tick
 js/save.js        save / load / save codes
 js/sprites.js     procedural building art (cached per direction)
@@ -92,12 +99,12 @@ The simulation runs at a fixed 60 ticks per second, separate from rendering. It 
 ## Tests
 
 ```
-node tests/sim.test.js   # data integrity + simulation behaviour (belts, power, oil, combat, saves…)
+node tests/sim.test.js   # data integrity + simulation behaviour (belts, power, oil, combat, railways, saves…)
 node tests/perf.js       # ~14,000-entity factory: ms per tick and topology rebuild cost
 ```
 
-The browser scripts (`tests/smoke.cjs`, `tests/play.cjs`, `tests/showcase.cjs`) drive the real page with Playwright. They mine, build, fuel, drag belts, configure assemblers, save and load, and take screenshots.
+The browser scripts (`tests/smoke.cjs`, `tests/play.cjs`, `tests/trains.cjs`, `tests/showcase.cjs` and others) drive the real page with Playwright. They mine, build, fuel, drag belts, configure assemblers, save and load, and take screenshots.
 
 ## Not in this version yet
 
-Trains and rail signals, logistic robots, the circuit network, and the planned late-game twist (contracts, markets or rival companies) are left for later iterations.
+Fluid wagons, logistic robots and the circuit network are left for later iterations.
