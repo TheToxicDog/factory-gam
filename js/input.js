@@ -17,6 +17,7 @@
       this.drag = null;
       this.repairPool = 0;
       this.lastWarn = 0;
+      this.zDone = new Set(); // targets that already got one item during this Z press
       const cv = app.renderer.canvas;
       cv.addEventListener('mousedown', (e) => this.onDown(e));
       window.addEventListener('mouseup', (e) => this.onUp(e));
@@ -66,7 +67,8 @@
       }
       switch (code) {
         case 'Escape':
-          if (this.mode) { this.mode = null; app.view.select = null; }
+          if (ui.held) ui.dropHeld();
+          else if (this.mode) { this.mode = null; app.view.select = null; }
           else if (ui.win) ui.close();
           else if (app.cursor) app.cursor = null;
           else ui.open('menu');
@@ -80,6 +82,9 @@
         case 'KeyQ': this.pipette(); break;
         case 'KeyR': this.rotate(e.shiftKey); break;
         case 'KeyX': this.mode = 'decon'; ui.toast('Drag over buildings to pick them up', 'info'); break;
+        case 'KeyZ':
+          if (!e.repeat) { this.zDone.clear(); this.dropOne(true); }
+          break;
         case 'Enter': case 'NumpadEnter':
           e.preventDefault();
           if (!FG.trains.board(this.g)) this.warn('Stand next to a train to get in');
@@ -170,6 +175,7 @@
     onDown(e) {
       const app = this.app;
       if (!app.game || app.titleShown) return;
+      if (app.ui.held) { app.ui.dropHeld(); e.preventDefault(); return; } // clicking away puts a split stack back
       if (app.ui.win && app.ui.win.name !== 'entity' && app.ui.win.name !== 'inventory') app.ui.close();
       e.preventDefault();
       this.app.renderer.canvas.focus && this.app.renderer.canvas.focus();
@@ -256,6 +262,50 @@
       FG.emit('sound', 'place');
       FG.emit('inventory');
       if (!g.player.inv.count(itemId)) this.app.cursor = null;
+    }
+
+    // Z: put one of the held item into the machine, chest, belt or rail car under the cursor.
+    // Keep Z held and sweep the mouse to put one into each thing you pass over.
+    dropOne(pressed) {
+      const app = this.app, g = this.g, m = this.mouse;
+      const c = app.cursor, hv = app.view.hover;
+      if (!g || app.titleShown) return;
+      if (!c || !c.item || c.ghost) { if (pressed) this.warn('Hold an item first, then press Z over a machine'); return; }
+      const id = c.item, name = D.items[id].name;
+      if (!hv || !(hv.ent || hv.car)) { if (pressed) this.warn('Point at a machine, chest, belt or train to put one ' + name.toLowerCase() + ' in'); return; }
+      let key, cx, cy, put, what, onBelt = false;
+      if (hv.car) {
+        const hit = hv.car, p = FG.trains.carPose(hit.train, hit.index);
+        key = 'c' + hit.car.id; cx = p.x; cy = p.y;
+        what = D.items[FG.trains.itemFor(hit.car)].name;
+        put = () => FG.trains.carInsert(hit.car, id, 1);
+      } else {
+        const e = hv.ent, pr = D.protos[e.p];
+        key = 'e' + e.id; cx = e.x + e.w / 2; cy = e.y + e.h / 2;
+        what = D.items[pr.item].name;
+        const node = FG.isBeltKind(pr.kind) ? FG.belts.nodeAt(g, hv.tile[0], hv.tile[1]) : null;
+        if (node) {
+          // On a belt: one item per tile, on the lane nearest the cursor.
+          onBelt = true;
+          key += ':' + hv.tile.join(',');
+          cx = hv.tile[0] + 0.5; cy = hv.tile[1] + 0.5;
+          const r = FG.rightOf(node.dir);
+          const lane = (m.wx - cx) * FG.DX[r] + (m.wy - cy) * FG.DY[r] >= 0 ? 1 : 0;
+          put = () => (FG.belts.laneInsert(node.lanes[lane], id, Math.min(0.5, node.len * 0.5), node.len) ? 1 : 0);
+        } else if (pr.kind === 'chest') put = () => 1 - e.inv.add(id, 1);
+        else put = () => FG.insertItem(g, e, id, 1, 'direct');
+      }
+      if (this.zDone.has(key)) return;
+      this.zDone.add(key);
+      if (!g.player.inv.count(id)) { app.cursor = null; return; }
+      if (!this.inReach(cx, cy, BUILD_REACH)) { this.warn('Out of reach'); return; }
+      if (put() > 0) {
+        g.player.inv.remove(id, 1);
+        g.effects.push({ type: 'drop', id, x: cx, y: cy, t: 0, life: 30 });
+        FG.emit('sound', 'pickup');
+        FG.emit('inventory');
+        if (!g.player.inv.count(id)) app.cursor = null;
+      } else this.warn(onBelt ? 'No room on the belt there' : what + ' can\'t take ' + name.toLowerCase());
     }
 
     insertIntoCar(hit, id, all) {
@@ -684,6 +734,8 @@
       inp.aimX = this.mouse.wx; inp.aimY = this.mouse.wy;
       inp.mine = null;
       app.view.mineTarget = null;
+      if (k.has('KeyZ')) this.dropOne(false);
+      else if (this.zDone.size) this.zDone.clear();
       const m = this.mouse;
       const hv = app.view.hover;
       if (m.right && hv && !app.titleShown) {

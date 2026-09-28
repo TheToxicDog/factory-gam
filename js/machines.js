@@ -53,7 +53,7 @@
     const node = FG.belts.nodeAt(g, e.ox, e.oy);
     while (b.n > 0) {
       if (node) {
-        if (!FG.belts.dropOn(node, b.id, e.dir)) break;
+        if (!FG.belts.dropOn(node, b.id, e.dir, true)) break; // drills fill the near lane
       } else {
         const car = FG.trains.carAtTile(g, e.ox, e.oy);
         const t = car ? null : FG.entAt(g, e.ox, e.oy);
@@ -314,6 +314,12 @@
     return null;
   }
 
+  function hasItems(g, src) {
+    if (src.node) return FG.belts.hasPickable(src.node);
+    if (src.car) return FG.trains.carOutputs(src.car).length > 0;
+    return FG.outputsOf(g, src.ent).length > 0;
+  }
+
   function updateInserter(g, e) {
     const pr = D.protos[e.p];
     const r = pr.reach;
@@ -340,7 +346,12 @@
       const want = wantFor(g, dst, pr.filter ? e.filter : null);
       const hand = 1 + g.bonus.hand;
       const got = takeFrom(g, src, want, hand);
-      if (!got) { e.status = 'waiting'; if (electric) e.want = pr.drain; return; }
+      if (!got) {
+        // Items there but none wanted means the target is stocked, not that the arm is stuck.
+        e.status = hasItems(g, src) ? 'target_full' : 'waiting';
+        if (electric) e.want = pr.drain;
+        return;
+      }
       e.hand = got;
       e.st = 1;
       e.t = 0;

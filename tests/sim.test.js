@@ -294,6 +294,80 @@ test('electric drills fill a belt; arms feed an electric chain', () => {
   assert(items >= 5, 'items on belt ' + items + ' drill ' + d.status);
 });
 
+// Which side of a vertical belt tile a lane's items sit on: -1 west, +1 east.
+function laneSide(g, x, y, L) {
+  const n = FG.belts.nodeAt(g, x, y), p = [0, 0];
+  FG.belts.itemPos(n, L, 0.5, p);
+  return Math.sign(p[0] - (x + 0.5));
+}
+function laneCounts(g, x, y0, y1) {
+  const c = { west: 0, east: 0 };
+  for (let y = y0; y <= y1; y++) {
+    const n = FG.belts.nodeAt(g, x, y);
+    for (const L of [0, 1]) c[laneSide(g, x, y, L) < 0 ? 'west' : 'east'] += n.lanes[L].ids.length;
+  }
+  return c;
+}
+
+test('drills drop ore on the near lane of a belt', () => {
+  const g = newGame();
+  ore(g, 'IRON', 96, 96, 12, 12, 5000);
+  solarField(g, 60, 90, 2, 4);
+  for (let y = 95; y <= 110; y++) place(g, 'belt', 102, y, N);
+  place(g, 'electric_drill', 99, 100, E); // west of the belt, output (102, 101)
+  place(g, 'medium_pole', 98, 104);
+  place(g, 'medium_pole', 90, 104); place(g, 'medium_pole', 82, 104);
+  run(g, 60 * 15);
+  let c = laneCounts(g, 102, 95, 110);
+  assert(c.west > 3 && c.east === 0, 'electric drill on the west fills the west lane: ' + JSON.stringify(c));
+  // A burner drill on the east side fills the east lane.
+  const b = place(g, 'burner_drill', 103, 104, W);
+  FG.insertItem(g, b, 'coal', 20, 'direct');
+  run(g, 60 * 15);
+  c = laneCounts(g, 102, 95, 110);
+  assert(c.east > 1 && c.west > 3, 'burner drill on the east fills the east lane: ' + JSON.stringify(c));
+});
+
+test('arms put items on the far lane and pick up from either lane', () => {
+  const g = newGame();
+  solarField(g, 60, 90, 2, 4);
+  for (let y = 95; y <= 106; y++) place(g, 'belt', 102, y, N);
+  const src = place(g, 'iron_chest', 100, 104);
+  src.inv.add('iron_plate', 200);
+  place(g, 'inserter', 101, 104, E); // west of the belt, dropping east onto it
+  for (const [x, y] of [[98, 101], [104, 96], [90, 101], [82, 101]]) place(g, 'medium_pole', x, y);
+  run(g, 60 * 6);
+  const c = laneCounts(g, 102, 95, 106);
+  assert(c.east > 3 && c.west === 0, 'items placed from the west land on the east (far) lane: ' + JSON.stringify(c));
+  // An arm on the east side takes them off, though they are on its near lane.
+  const out = place(g, 'iron_chest', 104, 98);
+  const east = place(g, 'inserter', 103, 98, E); // picks from the belt at (102, 98)
+  run(g, 60 * 8);
+  assert(out.inv.count('iron_plate') > 3, 'arm on the other side picks from its near lane: ' + out.inv.count('iron_plate'));
+  // An arm on the west side takes from its far lane too (with the first arm gone).
+  FG.removeEntity(g, east);
+  const out2 = place(g, 'iron_chest', 100, 96);
+  place(g, 'inserter', 101, 96, W);
+  run(g, 60 * 8);
+  assert(out2.inv.count('iron_plate') > 3, 'arm on the same side picks from its far lane: ' + out2.inv.count('iron_plate'));
+});
+
+test('an arm facing a stocked machine says so instead of waiting for items', () => {
+  const g = newGame();
+  solarField(g, 60, 90, 2, 4);
+  for (const [x, y] of [[98, 101], [90, 101], [82, 101]]) place(g, 'medium_pole', x, y);
+  const src = place(g, 'iron_chest', 100, 100);
+  src.inv.add('coal', 200);
+  const arm = place(g, 'inserter', 101, 100, E);
+  const f = place(g, 'stone_furnace', 102, 100);
+  run(g, 60 * 20);
+  assert(f.fuel && f.fuel.n > 0, 'furnace fuelled');
+  assert(arm.status === 'target_full', 'status ' + arm.status);
+  src.inv.remove('coal', 200);
+  run(g, 60 * 3);
+  assert(arm.status === 'waiting', 'nothing left to take: ' + arm.status);
+});
+
 test('oil: pumpjack -> refinery -> chemical plant makes plastic', () => {
   const g = newGame();
   const W0 = g.world.W;

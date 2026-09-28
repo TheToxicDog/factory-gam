@@ -34,6 +34,9 @@ It's a normal game from there: explore it, open every machine, or keep building.
 | Lay track: the planner curves it to reach the point | Hold rails, drag from a rail point |
 | Get in or out of a train | Enter (then W go, S brake or reverse, A/D pick a branch) |
 | Put the held item into a machine (fuel, ore, ammo) | Left-click the machine |
+| Put one of the held item into a machine, chest, belt or train | Z (hold it and sweep to put one into each) |
+| Split a stack | Right-click it in the inventory (Shift+right-click takes it all), then click a slot; right-click puts down one at a time |
+| Move half a stack into a machine | Right-click it in the machine's window |
 | Rotate | R (Shift+R reverses) |
 | Clear hand, or copy the hovered building into your hand | Q |
 | Inventory and crafting | E |
@@ -65,7 +68,7 @@ Guided objectives in the top-left walk you through the arc.
 
 ## Systems
 
-- **Belts** have two lanes that carry visible items. They handle curves, side-loading, tunnel belts and splitters (with priority and filters), in three speed tiers of 15, 30 and 45 items/s. Items are processed downstream-first, so fully compressed belts reach their full rated throughput.
+- **Belts** have two lanes that carry visible items. Arms put items on the far lane and pick up from either lane, as in Factorio; drills drop ore on the lane nearest them, so drills on both sides of a belt fill both lanes. They handle curves, side-loading, tunnel belts and splitters (with priority and filters), in three speed tiers of 15, 30 and 45 items/s. Items are processed downstream-first, so fully compressed belts reach their full rated throughput.
 - **Arms** only pick up what their target can use, keep small input buffers, and take output only. Burner arms refuel themselves.
 - **Machines** show a status: working, no power, low power, out of fuel, missing ingredients, output full, or ore depleted. Stuck machines get a badge in the world.
 - **Power networks** are built from poles. Steam engines draw from shared steam networks. Solar output follows the day/night cycle, and accumulators buffer the difference. When demand exceeds supply, every machine slows down.

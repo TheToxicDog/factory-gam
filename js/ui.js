@@ -36,7 +36,7 @@
     no_fuel: ['Out of fuel', 'bad'], no_input: ['Waiting for ingredients', 'warn'], no_recipe: ['No recipe set', ''],
     output_full: ['Output full', 'warn'], no_ore: ['Ore depleted', 'bad'], waiting_space: ['Output blocked', 'warn'],
     no_research: ['No research selected', ''], no_target: ['Nothing to drop into', 'warn'], no_source: ['Nothing to pick from', 'warn'],
-    waiting: ['Waiting for items', ''], no_water: ['No water', 'warn'], no_ammo: ['Out of ammo', 'bad'],
+    waiting: ['Waiting for items', ''], target_full: ['Target has enough', ''], no_water: ['No water', 'warn'], no_ammo: ['Out of ammo', 'bad'],
     ready: ['Ready to launch', 'good'], need_satellite: ['Needs a Survey satellite', 'warn'], launching: ['Launching', 'good'],
   };
   function statusOf(e) {
@@ -124,6 +124,11 @@
       this.lastMini = 0;
       this.mapView = null;
       this.hotbarEls = [];
+      // A stack split off in the inventory window, following the mouse until it is put down.
+      this.held = null; // { i: source slot, id, n }
+      this.heldEl = h('div', { class: 'slot held-stack', hidden: true });
+      document.body.appendChild(this.heldEl);
+      document.addEventListener('mousemove', (ev) => { if (this.held) this.placeHeldEl(ev.clientX, ev.clientY); });
       this.setupTooltip();
       this.setupHud();
       // Ignore events from the title-screen demo factory.
@@ -327,7 +332,7 @@
       else if (c.bp) hand = '<b>Blueprint</b><div>' + c.bp.ents.length + ' buildings' + (c.bp.rails && c.bp.rails.length ? ' · ' + c.bp.rails.length + ' track' : '') + ' · R rotate · Q clear</div>';
       else {
         const n = p.inv.count(c.item);
-        hand = '<b>' + nameOf(c.item) + '</b><div>' + (c.ghost ? 'Ghost placement' : '<span class="num">' + n + '</span> in inventory') + ' · ' + (D.items[c.item].track ? 'Drag to lay track · R turns a single piece · ' : D.items[c.item].place && D.protos[D.items[c.item].place].rotatable ? 'R rotate · ' : '') + 'Q clear</div>';
+        hand = '<b>' + nameOf(c.item) + '</b><div>' + (c.ghost ? 'Ghost placement' : '<span class="num">' + n + '</span> in inventory') + ' · ' + (D.items[c.item].track ? 'Drag to lay track · R turns a single piece · ' : D.items[c.item].place && D.protos[D.items[c.item].place].rotatable ? 'R rotate · ' : '') + (c.ghost ? '' : 'Z put one in · ') + 'Q clear</div>';
       }
       if (this.$('hud-hand').dataset.k !== hand) { this.$('hud-hand').dataset.k = hand; this.$('hud-hand').innerHTML = hand; }
       // hotbar
@@ -513,6 +518,7 @@
     toggle(name, arg) { if (this.isOpen(name)) this.close(); else this.open(name, arg); }
     close() {
       if (!this.win) return;
+      this.dropHeld();
       if (this.win.onClose) this.win.onClose();
       this.win.el.remove();
       this.win = null;
@@ -542,37 +548,98 @@
     }
 
     // Player inventory grid (shared by several windows). onSlot(index, slot, ev)
-    invGrid(onSlot) {
+    // With opts.split, right-click splits a stack: half of it follows the mouse until you
+    // click a slot to put it down (right-click puts down one at a time).
+    invGrid(onSlot, opts) {
+      opts = opts || {};
       const grid = h('div', { class: 'grid' });
       const els = [];
       const g = this.g;
+      const update = () => {
+        if (els.length !== g.player.inv.size) build();
+        const H = this.held;
+        g.player.inv.slots.forEach((s, i) => {
+          const src = opts.split && H && H.i === i && s && s.id === H.id;
+          setSlot(els[i], s && s.id, s ? (src ? s.n - H.n || '' : s.n) : undefined);
+          els[i].classList.toggle('held-src', !!src);
+        });
+      };
+      const down = (i, ev) => {
+        const s = g.player.inv.slots[i];
+        if (opts.split && this.held) { this.putHeld(i, ev.button === 2 ? 1 : this.held.n); update(); return; }
+        if (!s) return;
+        if (opts.split && ev.button === 2) {
+          this.held = { i, id: s.id, n: ev.shiftKey ? s.n : Math.ceil(s.n / 2) };
+          this.placeHeldEl(ev.clientX, ev.clientY);
+          update();
+          return;
+        }
+        onSlot(i, s, ev);
+      };
       const build = () => {
         grid.innerHTML = '';
         els.length = 0;
         for (let i = 0; i < g.player.inv.size; i++) {
-          const el = slotEl(null, undefined, { onDown: (ev) => { const s = g.player.inv.slots[i]; if (s) onSlot(i, s, ev); } });
+          const el = slotEl(null, undefined, { onDown: (ev) => down(i, ev) });
           els.push(el);
           grid.appendChild(el);
         }
       };
       build();
-      return {
-        el: grid,
-        update: () => {
-          if (els.length !== g.player.inv.size) build();
-          g.player.inv.slots.forEach((s, i) => setSlot(els[i], s && s.id, s ? s.n : undefined));
-        },
-      };
+      return { el: grid, update };
+    }
+
+    // Put up to `want` of the held stack into slot j (an empty slot or the same item). A
+    // whole held stack dropped on a different item swaps places with it.
+    putHeld(j, want) {
+      const inv = this.g.player.inv, H = this.held;
+      const src = inv.slots[H.i];
+      if (!src || src.id !== H.id) { this.dropHeld(); return; }
+      H.n = Math.min(H.n, src.n);
+      if (j === H.i) { this.dropHeld(); return; }
+      const dst = inv.slots[j];
+      let k = 0;
+      if (!dst) {
+        k = Math.min(want, H.n);
+        inv.slots[j] = { id: H.id, n: k };
+      } else if (dst.id === H.id) {
+        k = Math.min(want, H.n, D.items[H.id].stack - dst.n);
+        if (!k) { this.toast('That stack is full', 'warn'); return; }
+        dst.n += k;
+      } else if (H.n === src.n) {
+        inv.slots[j] = src; inv.slots[H.i] = dst;
+        this.dropHeld();
+        FG.emit('inventory');
+        return;
+      } else { this.toast('Put it in an empty slot or on the same item', 'warn'); return; }
+      src.n -= k; H.n -= k;
+      if (src.n <= 0) inv.slots[H.i] = null;
+      if (H.n <= 0) this.dropHeld(); else this.placeHeldEl();
+      FG.emit('inventory');
+    }
+    // Let go of a split stack: it was never taken out of its slot, so nothing is lost.
+    dropHeld() {
+      if (!this.held) return;
+      this.held = null;
+      this.heldEl.hidden = true;
+      if (this.win && this.win.update) this.win.update(true);
+    }
+    placeHeldEl(x, y) {
+      const H = this.held, el = this.heldEl;
+      if (!H) return;
+      if (x !== undefined) { el.style.left = x + 'px'; el.style.top = y + 'px'; }
+      setSlot(el, H.id, H.n);
+      el.hidden = false;
     }
 
     // -------------------------------------------------- inventory window
     build_inventory() {
       const g = this.g, app = this.app;
       const w = this.frame('inventory', 'Inventory');
-      const inv = this.invGrid((i, s) => { app.setCursor(s.id); this.close(); });
+      const inv = this.invGrid((i, s) => { app.setCursor(s.id); this.close(); }, { split: true });
       const sortBtn = h('button', { class: 'btn small', text: 'Sort', onclick: () => { g.player.inv.sort(); inv.update(); } });
       const left = h('div', { class: 'pane' }, h('div', { class: 'pane-head' }, h('h3', { text: 'Your inventory' }), sortBtn), inv.el,
-        h('div', { class: 'hint', text: 'Click an item to hold it. Click the world to place buildings, or click a machine to put fuel and materials into it.' }));
+        h('div', { class: 'hint', text: 'Click an item to hold it: click the world to build, click a machine to fill it, or press Z over a machine to put in one. Right-click a stack to split off half (shift+right-click takes it all), then click a slot to put it down; right-click puts down one at a time.' }));
       const groups = [['logistics', 'Logistics', 'belt'], ['production', 'Production', 'assembler_1'], ['intermediate', 'Intermediates', 'circuit'], ['combat', 'Combat', 'gun_turret']];
       let tab = this.craftTab || 'logistics';
       const tabs = h('div', { class: 'tabs' });
@@ -637,7 +704,7 @@
         h('div', { class: 'hint', text: 'Missing parts are crafted automatically when you have the raw materials. Right-click crafts 5, shift-click crafts as many as possible.' }));
       w.body.append(h('div', { class: 'panes' }, left, right));
       let last = 0;
-      w.update = () => { const now = performance.now(); if (now - last < 150) return; last = now; update(); };
+      w.update = (now2) => { const now = performance.now(); if (!now2 && now - last < 150) return; last = now; update(); };
       return w;
     }
 
@@ -933,8 +1000,8 @@
           if (FG.isBeltKind(pr.kind)) put(kvs([['Speed', () => Math.round(pr.speed * 8) + ' items/s'], ['Type', () => (pr.kind === 'underground' ? (ent.ug === 'in' ? 'Entrance' : 'Exit') + (ent.pair ? ', paired' : ', not paired') : pr.kind)]]));
       }
 
-      const inv = this.invGrid((i, s, ev) => this.transferToEntity(ent, s.id, ev.shiftKey ? g.player.inv.count(s.id) : s.n));
-      const right = h('div', { class: 'pane' }, h('h3', { text: 'Your inventory' }), inv.el, h('div', { class: 'hint', text: 'Click to move a stack in · shift-click moves all of that item.' }));
+      const inv = this.invGrid((i, s, ev) => this.transferToEntity(ent, s.id, ev.shiftKey ? g.player.inv.count(s.id) : ev.button === 2 ? Math.ceil(s.n / 2) : s.n));
+      const right = h('div', { class: 'pane' }, h('h3', { text: 'Your inventory' }), inv.el, h('div', { class: 'hint', text: 'Click to move a stack in · right-click moves half · shift-click moves all of that item.' }));
       const left = h('div', { class: 'pane' }, statusLine, machine);
       w.body.append(h('div', { class: 'panes' }, left, right));
       w.update = () => {
@@ -1077,7 +1144,7 @@
       left.append(carsBox, sched, h('div', { class: 'hint', text: 'A train only drives the way a locomotive faces. For stations at the end of a line, add a second locomotive facing back, or build a loop.' }));
       const inv = this.invGrid((i, sl, ev) => {
         const id = sl.id;
-        let left2 = ev.shiftKey ? g.player.inv.count(id) : sl.n;
+        let left2 = ev.shiftKey ? g.player.inv.count(id) : ev.button === 2 ? Math.ceil(sl.n / 2) : sl.n;
         let moved = 0;
         const order = D.items[id].fuel ? tr.cars.filter((c) => c.type === 'loco').concat(tr.cars.filter((c) => c.type === 'wagon')) : tr.cars.filter((c) => c.type === 'wagon');
         for (const car of order) {
@@ -1087,7 +1154,7 @@
         }
         if (!moved) this.toast('No room for that in this train', 'warn');
       });
-      const right = h('div', { class: 'pane' }, h('h3', { text: 'Your inventory' }), inv.el, h('div', { class: 'hint', text: 'Click fuel to load the locomotives, anything else goes into the wagons.' }));
+      const right = h('div', { class: 'pane' }, h('h3', { text: 'Your inventory' }), inv.el, h('div', { class: 'hint', text: 'Click fuel to load the locomotives, anything else goes into the wagons. Right-click moves half a stack.' }));
       w.body.append(h('div', { class: 'panes' }, left, right));
       let lastCars = tr.cars.length;
       w.update = () => {
@@ -1450,7 +1517,7 @@
         ['Walk', 'W A S D'], ['Mine / pick up', 'Hold right-click'], ['Open machine', 'Left-click'], ['Place building', 'Left-click (drag for lines)'],
         ['Rotate', 'R  (Shift+R back)'], ['Clear hand / copy building', 'Q'], ['Inventory & crafting', 'E'], ['Research', 'T'],
         ['Production stats', 'P'], ['Map', 'M'], ['Detail overlay', 'Alt'], ['Pollution overlay', 'F'],
-        ['Hotbar', '1 – 0'], ['Quick transfer', 'Ctrl+click'], ['Copy / paste settings', 'Shift+R-click / Shift+click'], ['Shoot nearest enemy', 'Hold Space'],
+        ['Hotbar', '1 – 0'], ['Put one held item into a machine', 'Z (hold and sweep for more)'], ['Split a stack', 'Right-click it in the inventory'], ['Quick transfer', 'Ctrl+click'], ['Copy / paste settings', 'Shift+R-click / Shift+click'], ['Shoot nearest enemy', 'Hold Space'],
         ['Throw grenade', 'G'], ['Copy area as blueprint', 'Ctrl+C then drag'], ['Cut area', 'Ctrl+X then drag'], ['Paste blueprint', 'Ctrl+V'],
         ['Remove area', 'X then drag'], ['Board or leave a train', 'Enter'], ['Drive a train', 'W / S, A / D at junctions'], ['Zoom', 'Mouse wheel'], ['Pause menu', 'Esc'], ['Show all pole coverage', 'Shift (holding a pole)'],
       ];
@@ -1458,7 +1525,7 @@
         h('ul', { class: 'help-tips' },
           h('li', { text: 'Burner drills drop ore into whatever is in front of them. A drill facing a stone furnace is a complete mine-and-smelt line.' }),
           h('li', { text: 'Arms (inserters) move items from behind them to the tile in front, and only take what the target needs.' }),
-          h('li', { text: 'Belts have two lanes. Arms and drills drop onto the far lane; a belt feeding into the side of another fills one lane.' }),
+          h('li', { text: 'Belts have two lanes. Arms put items on the far lane and pick up from either lane; drills drop ore on the lane nearest them; a belt feeding into the side of another fills one lane.' }),
           h('li', { text: 'Power: water pump on a shore → boiler (fuel it) → steam engines. Poles connect machines inside their blue area.' }),
           h('li', { text: 'Machines show a badge when stuck: lightning for power, … for missing ingredients, ▲ for a full output.' }),
           h('li', { text: 'Pollution provokes the native hives. Put turrets and walls between your factory and them, and keep turrets fed with magazines.' }),

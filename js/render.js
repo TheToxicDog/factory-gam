@@ -777,6 +777,14 @@
           ctx.globalAlpha = 1 - k;
           ctx.drawImage(FG.icons.get(f.id), sx - T * 0.25, sy - T * 0.25, T * 0.5, T * 0.5);
           ctx.globalAlpha = 1;
+        } else if (f.type === 'drop') {
+          // An item put in by hand sinks into its target.
+          const k = f.t / f.life;
+          const [sx, sy] = this.toScreen(f.x, f.y - 0.8 + k * 0.8);
+          ctx.globalAlpha = 1 - k * k;
+          const s = T * (0.5 - k * 0.2);
+          ctx.drawImage(FG.icons.get(f.id), sx - s / 2, sy - s / 2, s, s);
+          ctx.globalAlpha = 1;
         }
       }
     }

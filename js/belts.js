@@ -295,17 +295,29 @@
     }
   };
 
-  // Drop an item onto a belt tile from a machine or arm moving in direction `md`.
-  belts.dropOn = function (node, id, md) {
-    let lane;
-    if (md === FG.rightOf(node.dir)) lane = 1; // coming from the belt's left: far lane is the right lane
-    else if (md === FG.leftOf(node.dir)) lane = 0;
-    else lane = 1;
+  // Lane 0 is the belt's left lane and lane 1 its right, looking along the travel direction.
+  // Something reaching over a belt in direction `md` has a near lane and a far lane.
+  belts.laneFor = function (node, md, near) {
+    if (md === FG.rightOf(node.dir)) return near ? 0 : 1; // reaching in from the belt's left
+    if (md === FG.leftOf(node.dir)) return near ? 1 : 0; // reaching in from the belt's right
+    return 1; // along the belt: no near or far side
+  };
+  // Drop an item onto a belt tile, reaching in direction `md`. Arms put items on the far
+  // lane; drills (near = true) put ore on the lane on their own side.
+  belts.dropOn = function (node, id, md, near) {
+    const lane = belts.laneFor(node, md, near);
     const at = Math.min(0.5, node.len * 0.5);
     return laneInsert(node.lanes[lane], id, at, node.len);
   };
+  // Is anything on the belt tile within an arm's grab window?
+  belts.hasPickable = function (node) {
+    const hi = Math.min(node.len, 1);
+    for (const lane of node.lanes) for (const p of lane.pos) if (p >= 0.1 && p <= hi - 0.05) return true;
+    return false;
+  };
 
-  // Pick an item near the middle of a belt tile. want(id) > 0 means acceptable.
+  // Pick an item near the middle of a belt tile, from either lane (whichever acceptable item
+  // is closest to the grab point, as in Factorio). want(id) > 0 means acceptable.
   belts.pickFrom = function (node, want, max) {
     let best = -1, bestLane = -1, bestD = 9;
     let id = null;
