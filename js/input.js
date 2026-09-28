@@ -212,7 +212,9 @@
       if (!this.inReach(ent.x + ent.w / 2, ent.y + ent.h / 2, BUILD_REACH)) { this.warn('Out of reach'); return; }
       const have = g.player.inv.count(id);
       if (!have) { this.warn('You have no ' + D.items[id].name); this.app.cursor = null; return; }
-      const n = all ? have : Math.min(have, D.items[id].stack);
+      // Fuel goes in a handful at a time so one click doesn't empty your pockets.
+      const burner = D.protos[ent.p].burner && D.items[id].fuel;
+      const n = all ? have : burner ? Math.min(have, 5) : Math.min(have, D.items[id].stack);
       const before = g.player.inv.count(id);
       this.app.ui.transferToEntity(ent, id, n);
       const moved = before - g.player.inv.count(id);

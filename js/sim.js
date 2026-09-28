@@ -329,7 +329,10 @@
       const r = 0.28;
       for (const [ox, oy] of [[-r, -r], [r, -r], [-r, r], [r, r]]) {
         const tx = Math.floor(x + ox), ty = Math.floor(y + oy);
-        if (!w.inBounds(tx, ty) || w.isWater(tx, ty) || w.hasObstacle(tx, ty)) return true;
+        if (!w.inBounds(tx, ty) || w.isWater(tx, ty)) return true;
+        // Trees don't block walking (only building); boulders do.
+        const ri = ty * w.W + tx;
+        if (w.res[ri] === FG.RES.ROCK && w.amt[ri] > 0) return true;
         const e = FG.entAt(this, tx, ty);
         if (e && D.protos[e.p].solid) return true;
         if (this.enemies.nestBlocks(tx, ty, 1, 1)) return true;

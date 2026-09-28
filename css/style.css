@@ -385,6 +385,7 @@ textarea { min-height: 120px; resize: vertical; user-select: text; -webkit-user-
 
 @media (max-width: 760px) {
   :root { --slot: 34px; }
+  #title { background: rgba(13, 12, 11, 0.86); }
   #hud-left { width: 220px; }
   #hud-objective p { display: none; }
   #minimap { width: 120px; height: 120px; }
