@@ -44,7 +44,7 @@ It's a normal game from there: explore it, open every machine, or keep building.
 | Production statistics | P |
 | Map | M |
 | Hotbar | 1 – 0 |
-| Take a machine's output | Ctrl+click |
+| Take a machine's output (Ctrl+click again for its fuel; works on burners, drills, boilers and rail cars) | Ctrl+click |
 | Copy / paste machine settings | Shift+right-click / Shift+click |
 | Copy an area as a blueprint, cut, paste | Ctrl+C / Ctrl+X then drag, Ctrl+V |
 | Pick up everything in an area | X then drag |
@@ -69,7 +69,7 @@ Guided objectives in the top-left walk you through the arc.
 ## Systems
 
 - **Belts** have two lanes that carry visible items. Arms put items on the far lane and pick up from either lane, as in Factorio; drills drop ore on the lane nearest them, so drills on both sides of a belt fill both lanes. They handle curves, side-loading, tunnel belts and splitters (with priority and filters), in three speed tiers of 15, 30 and 45 items/s. Items are processed downstream-first, so fully compressed belts reach their full rated throughput.
-- **Arms** only pick up what their target can use, keep small input buffers, and take output only. Burner arms refuel themselves.
+- **Arms** only pick up what their target can use, keep small input buffers, and take output only. Burner arms refuel themselves. A burner holds one kind of fuel at a time, so an arm bringing coal waits (and says so) until hand-loaded wood is burnt or taken out.
 - **Machines** show a status: working, no power, low power, out of fuel, missing ingredients, output full, or ore depleted. Stuck machines get a badge in the world.
 - **Power networks** are built from poles. Steam engines draw from shared steam networks. Solar output follows the day/night cycle, and accumulators buffer the difference. When demand exceeds supply, every machine slows down.
 - **Fluids** pool across connected pipes and machines. Each network holds one fluid. A full output blocks the machine, which is what makes oil byproducts a puzzle.

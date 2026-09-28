@@ -229,6 +229,7 @@
       if (hv.car) {
         const p = FG.trains.carPose(hv.car.train, hv.car.index);
         if (!this.inReach(p.x, p.y, BUILD_REACH)) { this.warn('Out of reach'); return; }
+        if (e.ctrlKey) { this.quickTakeCar(hv.car); return; }
         app.ui.open('train', hv.car);
         return;
       }
@@ -336,17 +337,48 @@
       if (!g.player.inv.count(id)) this.app.cursor = null;
     }
 
+    // Ctrl+click: take what a machine has made. If it has made nothing, take its fuel instead,
+    // so you can get coal back from any burner (or pull out wood to make room for coal).
     quickTake(ent) {
-      const g = this.g;
+      const g = this.g, inv = g.player.inv;
+      const got = [];
+      let full = false;
+      const take = (id, n, remove) => {
+        const k = Math.min(n, inv.space(id));
+        if (k < n) full = true;
+        if (k <= 0) return;
+        remove(k);
+        inv.add(id, k);
+        got.push([id, k]);
+      };
+      for (const [id, n] of FG.outputsOf(g, ent)) take(id, n, (k) => FG.takeOutput(g, ent, id, k));
+      const tookProducts = got.length > 0;
+      if (!tookProducts && ent.fuel && ent.fuel.n > 0) {
+        const f = ent.fuel;
+        take(f.id, f.n, (k) => { f.n -= k; if (!f.n) ent.fuel = null; });
+      }
+      if (!got.length) { this.warn(full ? 'Inventory full' : 'Nothing to take'); return; }
+      const what = got.map(([id, k]) => k + ' ' + D.items[id].name.toLowerCase()).join(', ');
+      const more = tookProducts && ent.fuel && ent.fuel.n > 0 ? ' · Ctrl+click again for the ' + D.items[ent.fuel.id].name.toLowerCase() : '';
+      this.app.ui.toast('Took ' + what + more, 'info');
+      g.effects.push({ type: 'pick', id: got[0][0], x: ent.x + ent.w / 2, y: ent.y + ent.h / 2, t: 0, life: 40 });
+      FG.emit('sound', 'pickup');
+      FG.emit('inventory');
+    }
+    // Ctrl+click a rail car: a wagon's cargo, or a locomotive's fuel.
+    quickTakeCar(hit) {
+      const g = this.g, inv = g.player.inv, car = hit.car;
       let took = 0;
-      for (const [id, n] of FG.outputsOf(g, ent)) {
-        const k = Math.min(n, g.player.inv.space(id));
+      for (const s of car.inv.slots) {
+        if (!s) continue;
+        const k = Math.min(s.n, inv.space(s.id));
         if (k <= 0) continue;
-        FG.takeOutput(g, ent, id, k);
-        g.player.inv.add(id, k);
+        car.inv.remove(s.id, k);
+        inv.add(s.id, k);
         took += k;
       }
-      this.app.ui.toast(took ? 'Took ' + took + ' items' : 'Nothing to take', took ? 'info' : 'warn');
+      if (took) { this.app.ui.toast('Took ' + took + ' items from the ' + (car.type === 'loco' ? 'locomotive' : 'wagon'), 'info'); FG.emit('sound', 'pickup'); FG.emit('inventory'); }
+      else this.warn('Nothing to take');
     }
 
     copySettings() {

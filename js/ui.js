@@ -36,7 +36,7 @@
     no_fuel: ['Out of fuel', 'bad'], no_input: ['Waiting for ingredients', 'warn'], no_recipe: ['No recipe set', ''],
     output_full: ['Output full', 'warn'], no_ore: ['Ore depleted', 'bad'], waiting_space: ['Output blocked', 'warn'],
     no_research: ['No research selected', ''], no_target: ['Nothing to drop into', 'warn'], no_source: ['Nothing to pick from', 'warn'],
-    waiting: ['Waiting for items', ''], target_full: ['Target has enough', ''], no_water: ['No water', 'warn'], no_ammo: ['Out of ammo', 'bad'],
+    waiting: ['Waiting for items', ''], target_full: ['Target has enough', ''], other_fuel: ['Target is burning a different fuel', 'warn'], no_water: ['No water', 'warn'], no_ammo: ['Out of ammo', 'bad'],
     ready: ['Ready to launch', 'good'], need_satellite: ['Needs a Survey satellite', 'warn'], launching: ['Launching', 'good'],
   };
   function statusOf(e) {
@@ -393,7 +393,7 @@
           if (keys.length) parts.push(h('div', { class: 'chips' }, keys.map((k) => slotEl(k, t[k], { tip: false }))));
           else kv('Cargo', 'empty');
         }
-        parts.push(h('div', { class: 'kv', style: 'margin-top:6px;font-size:12px' }, h('span', { text: 'Click to open · Enter to ride · R turns a stopped locomotive' })));
+        parts.push(h('div', { class: 'kv', style: 'margin-top:6px;font-size:12px' }, h('span', { text: 'Click to open · Ctrl+click take its contents · Enter to ride · R turns a stopped locomotive' })));
       } else if (hv.rail) {
         const pc = hv.rail.pc;
         const kind = pc.t !== 'S' ? 'Curved rail' : pc.ah & 1 ? 'Diagonal rail' : 'Straight rail';
@@ -447,7 +447,7 @@
         }
         if (pr.kind === 'inserter' && e.filter) kv('Filter', nameOf(e.filter));
         if (e.hp < pr.hp) kv('Health', Math.ceil(e.hp) + ' / ' + pr.hp);
-        parts.push(h('div', { class: 'kv', style: 'margin-top:6px;font-size:12px' }, h('span', { text: 'Click open · right-click pick up · R rotate' })));
+        parts.push(h('div', { class: 'kv', style: 'margin-top:6px;font-size:12px' }, h('span', { text: 'Click open · Ctrl+click take items' + (pr.burner ? ' or fuel' : '') + ' · right-click pick up · R rotate' })));
       } else if (hv.ghost) {
         parts.push(h('h3', { text: 'Ghost: ' + nameOf(D.protos[hv.ghost.p].item) }));
         parts.push(h('div', { class: 'kv' }, h('span', { text: g.bonus.drones ? 'Drones will build it when you have the item nearby' : 'Click with an empty hand to build it from your inventory' })));
@@ -1517,7 +1517,7 @@
         ['Walk', 'W A S D'], ['Mine / pick up', 'Hold right-click'], ['Open machine', 'Left-click'], ['Place building', 'Left-click (drag for lines)'],
         ['Rotate', 'R  (Shift+R back)'], ['Clear hand / copy building', 'Q'], ['Inventory & crafting', 'E'], ['Research', 'T'],
         ['Production stats', 'P'], ['Map', 'M'], ['Detail overlay', 'Alt'], ['Pollution overlay', 'F'],
-        ['Hotbar', '1 – 0'], ['Put one held item into a machine', 'Z (hold and sweep for more)'], ['Split a stack', 'Right-click it in the inventory'], ['Quick transfer', 'Ctrl+click'], ['Copy / paste settings', 'Shift+R-click / Shift+click'], ['Shoot nearest enemy', 'Hold Space'],
+        ['Hotbar', '1 – 0'], ['Put one held item into a machine', 'Z (hold and sweep for more)'], ['Split a stack', 'Right-click it in the inventory'], ['Take products (then fuel)', 'Ctrl+click'], ['Copy / paste settings', 'Shift+R-click / Shift+click'], ['Shoot nearest enemy', 'Hold Space'],
         ['Throw grenade', 'G'], ['Copy area as blueprint', 'Ctrl+C then drag'], ['Cut area', 'Ctrl+X then drag'], ['Paste blueprint', 'Ctrl+V'],
         ['Remove area', 'X then drag'], ['Board or leave a train', 'Enter'], ['Drive a train', 'W / S, A / D at junctions'], ['Zoom', 'Mouse wheel'], ['Pause menu', 'Esc'], ['Show all pole coverage', 'Shift (holding a pole)'],
       ];

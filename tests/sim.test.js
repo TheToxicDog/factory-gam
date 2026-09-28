@@ -352,6 +352,78 @@ test('arms put items on the far lane and pick up from either lane', () => {
   assert(out2.inv.count('iron_plate') > 3, 'arm on the same side picks from its far lane: ' + out2.inv.count('iron_plate'));
 });
 
+test('every kind of arm takes coal off a belt corner into a boiler, from either side', () => {
+  const bad = [];
+  let cases = 0;
+  for (let dout = 0; dout < 4; dout++) for (const turn of ['L', 'R']) {
+    const din = turn === 'L' ? FG.rightOf(dout) : FG.leftOf(dout);
+    const free = [0, 1, 2, 3].filter((d) => d !== FG.opposite(din) && d !== dout);
+    for (const side of free) for (const arm of ['burner_inserter', 'inserter', 'fast_inserter', 'long_inserter']) {
+      const g = newGame();
+      const cx = 128, cy = 128, DX = FG.DX, DY = FG.DY;
+      // Coal comes along a belt heading `din`, turns the corner and leaves heading `dout`.
+      for (let k = 6; k >= 1; k--) place(g, 'belt', cx - DX[din] * k, cy - DY[din] * k, din);
+      place(g, 'belt', cx, cy, dout);
+      for (let k = 1; k <= 4; k++) place(g, 'belt', cx + DX[dout] * k, cy + DY[dout] * k, dout);
+      const sx = cx - DX[din] * 7, sy = cy - DY[din] * 7;
+      place(g, 'iron_chest', sx - DX[din], sy - DY[din]).inv.add('coal', 400);
+      place(g, 'burner_inserter', sx, sy, din).fuel = { id: 'coal', n: 5 };
+      // The arm stands beside the corner (a long arm one tile further out) and drops into a boiler.
+      const r = arm === 'long_inserter' ? 2 : 1;
+      const ax = cx + DX[side] * r, ay = cy + DY[side] * r;
+      const a = place(g, arm, ax, ay, side);
+      if (arm === 'burner_inserter') a.fuel = { id: 'coal', n: 1 };
+      const tx = ax + DX[side] * r, ty = ay + DY[side] * r;
+      let boiler = null;
+      for (const [ox, oy] of [[0, 0], [-1, 0], [-2, 0], [0, -1], [-1, -1], [-2, -1]]) {
+        if (FG.canPlace(g, 'boiler', tx + ox, ty + oy, 0).ok) { boiler = place(g, 'boiler', tx + ox, ty + oy, 0); break; }
+      }
+      if (arm !== 'burner_inserter') {
+        // Power: a charged accumulator and a pole beside the arm.
+        let pole = null, acc = null;
+        for (const [ox, oy] of [[1, 1], [-1, 1], [1, -1], [-1, -1]]) {
+          if (FG.canPlace(g, 'medium_pole', ax + ox, ay + oy, 0).ok) { pole = place(g, 'medium_pole', ax + ox, ay + oy); break; }
+        }
+        for (let oy = -3; oy <= 2 && !acc; oy++) for (let ox = -3; ox <= 2 && !acc; ox++) {
+          if (FG.canPlace(g, 'accumulator', pole.x + ox, pole.y + oy, 0).ok) acc = place(g, 'accumulator', pole.x + ox, pole.y + oy);
+        }
+        acc.charge = D.protos.accumulator.capacity;
+      }
+      run(g, 60 * 20);
+      cases++;
+      if (!boiler || !boiler.fuel || boiler.fuel.n < 1) bad.push([din, dout, side, arm, a.status, boiler ? 'no coal' : 'no boiler'].join(' '));
+    }
+  }
+  assert(!bad.length, bad.length + ' of ' + cases + ' layouts failed:\n       ' + bad.join('\n       '));
+});
+
+test('an arm picks up an item waiting at the very end of a belt', () => {
+  const g = newGame();
+  // Coal runs east to a dead end at x=105; the arm stands beside that last tile.
+  for (let x = 100; x <= 105; x++) place(g, 'belt', x, 100, E);
+  const ch = place(g, 'iron_chest', 98, 100); ch.inv.add('coal', 50);
+  place(g, 'burner_inserter', 99, 100, E).fuel = { id: 'coal', n: 5 };
+  const arm = place(g, 'burner_inserter', 105, 99, N); // picks from (105,100), drops into (105,98)
+  arm.fuel = { id: 'coal', n: 1 };
+  const out = place(g, 'iron_chest', 105, 98);
+  run(g, 60 * 20);
+  assert(out.inv.count('coal') > 5, 'coal picked from the end tile: ' + out.inv.count('coal') + ' ' + arm.status);
+});
+
+test('an arm explains a burner already burning a different fuel', () => {
+  const g = newGame();
+  const ch = place(g, 'iron_chest', 100, 100); ch.inv.add('coal', 50);
+  const arm = place(g, 'burner_inserter', 101, 100, E);
+  arm.fuel = { id: 'coal', n: 2 };
+  const b = place(g, 'boiler', 102, 99, E); // (102..103, 99..101) covers (102,100)
+  FG.insertItem(g, b, 'wood', 5, 'direct');
+  run(g, 60 * 3);
+  assert(b.fuel.id === 'wood' && arm.status === 'other_fuel', 'status ' + arm.status);
+  b.fuel = null;
+  run(g, 60 * 3);
+  assert(b.fuel && b.fuel.id === 'coal', 'coal goes in once the wood is out: ' + JSON.stringify(b.fuel));
+});
+
 test('an arm facing a stocked machine says so instead of waiting for items', () => {
   const g = newGame();
   solarField(g, 60, 90, 2, 4);

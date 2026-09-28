@@ -314,10 +314,19 @@
     return null;
   }
 
-  function hasItems(g, src) {
-    if (src.node) return FG.belts.hasPickable(src.node);
-    if (src.car) return FG.trains.carOutputs(src.car).length > 0;
-    return FG.outputsOf(g, src.ent).length > 0;
+  // Item ids an arm could take from a source right now.
+  function offered(g, src) {
+    if (src.node) return FG.belts.pickableIds(src.node);
+    if (src.car) return new Set(FG.trains.carOutputs(src.car).map((x) => x[0]));
+    return new Set(FG.outputsOf(g, src.ent).map((x) => x[0]));
+  }
+  // Why an arm with a source and a target is not moving anything.
+  function idleReason(g, src, dst) {
+    const ids = offered(g, src);
+    if (!ids.size) return 'waiting';
+    const t = dst.ent;
+    if (t && D.protos[t.p].burner && t.fuel) for (const id of ids) if (D.items[id].fuel && id !== t.fuel.id) return 'other_fuel';
+    return 'target_full';
   }
 
   function updateInserter(g, e) {
@@ -348,7 +357,7 @@
       const got = takeFrom(g, src, want, hand);
       if (!got) {
         // Items there but none wanted means the target is stocked, not that the arm is stuck.
-        e.status = hasItems(g, src) ? 'target_full' : 'waiting';
+        e.status = idleReason(g, src, dst);
         if (electric) e.want = pr.drain;
         return;
       }

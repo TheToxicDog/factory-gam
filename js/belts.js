@@ -309,11 +309,11 @@
     const at = Math.min(0.5, node.len * 0.5);
     return laneInsert(node.lanes[lane], id, at, node.len);
   };
-  // Is anything on the belt tile within an arm's grab window?
-  belts.hasPickable = function (node) {
-    const hi = Math.min(node.len, 1);
-    for (const lane of node.lanes) for (const p of lane.pos) if (p >= 0.1 && p <= hi - 0.05) return true;
-    return false;
+  // Items on the belt tile within an arm's grab window (see pickFrom).
+  belts.pickableIds = function (node) {
+    const hi = Math.min(node.len, 1), ids = new Set();
+    for (const lane of node.lanes) lane.pos.forEach((p, i) => { if (p >= 0.1 && p <= hi) ids.add(lane.ids[i]); });
+    return ids;
   };
 
   // Pick an item near the middle of a belt tile, from either lane (whichever acceptable item
@@ -326,7 +326,7 @@
       const lane = node.lanes[L];
       for (let i = 0; i < lane.ids.length; i++) {
         const p = lane.pos[i];
-        if (p < 0.1 || p > hi - 0.05) continue;
+        if (p < 0.1 || p > hi) continue; // includes an item waiting at the very end to side-load
         const d = Math.abs(p - 0.55);
         if (d < bestD && want(lane.ids[i]) > 0) { bestD = d; best = i; bestLane = L; }
       }
