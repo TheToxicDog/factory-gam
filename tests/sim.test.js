@@ -48,6 +48,81 @@ function solarField(g, x0, y0, cols, rows) {
 function run(g, ticks) { for (let i = 0; i < ticks; i++) g.step(); }
 const N = 0, E = 1, S = 2, W = 3;
 
+console.log('Data integrity');
+
+test('every recipe category has a machine that can run it', () => {
+  const cats = new Set(['crafting']);
+  for (const id in D.protos) { const pr = D.protos[id]; if (pr.cats) pr.cats.forEach((c) => cats.add(c)); if (pr.kind === 'furnace') cats.add('smelting'); }
+  for (const id in D.recipes) assert(cats.has(D.recipes[id].cat), id + ' category ' + D.recipes[id].cat + ' has no machine');
+});
+
+test('every ingredient can be obtained', () => {
+  const raw = new Set(['wood', 'coal', 'stone', 'iron_ore', 'copper_ore', 'water', 'crude_oil', 'steam']);
+  const made = new Set(raw);
+  for (const id in D.recipes) { for (const o in D.recipes[id].out) made.add(o); for (const o in D.recipes[id].fout) made.add(o); }
+  for (const id in D.recipes) {
+    const r = D.recipes[id];
+    for (const i in r.ing) assert(made.has(i), id + ' needs ' + i + ' which nothing makes');
+    for (const i in r.fin) assert(made.has(i), id + ' needs fluid ' + i + ' which nothing makes');
+  }
+});
+
+test('every recipe is available at start or unlocked by research', () => {
+  for (const id in D.recipes) assert(D.recipes[id].start || D.recipeTech[id], id + ' is never unlocked');
+});
+
+test('every building has an obtainable recipe', () => {
+  for (const id in D.items) if (D.items[id].place) assert(D.recipeFor[id], 'no recipe makes ' + id);
+});
+
+test('research tree is reachable in order, with packs unlocked before use', () => {
+  const g = new FG.Game({ seed: 1, size: 128, enemies: 'off' });
+  const packTech = {};
+  for (const tid in D.techs) for (const u of D.techs[tid].unlocks) if (D.items[u] && D.items[u].sub === 'science') packTech[u] = tid;
+  let progress = true, rounds = 0;
+  while (progress && rounds++ < 100) {
+    progress = false;
+    for (const tid in D.techs) {
+      if (g.research.done[tid] || g.techState(tid) !== 'available') continue;
+      const t = D.techs[tid];
+      for (const p in t.cost) assert(p === 'sci_1' || g.research.done[packTech[p]], tid + ' uses ' + p + ' before it is unlocked');
+      // every ingredient chain of the needed packs must be unlocked
+      g.completeResearch(tid, true);
+      progress = true;
+    }
+  }
+  const missing = Object.keys(D.techs).filter((t) => !g.research.done[t]);
+  assert(!missing.length, 'unreachable techs: ' + missing.join(', '));
+});
+
+test('science pack recipes only use already-unlocked recipes', () => {
+  // Walk the tree; when a pack is unlocked, all its ingredients' recipes must be unlocked too (or be raw).
+  const g = new FG.Game({ seed: 1, size: 128, enemies: 'off' });
+  const raw = new Set(['wood', 'coal', 'stone', 'iron_ore', 'copper_ore']);
+  const need = (item, seen) => {
+    if (raw.has(item) || seen.has(item)) return null;
+    seen.add(item);
+    const r = D.recipeFor[item];
+    if (!r) return null;
+    if (!g.recipeEnabled(r.id)) return r.id;
+    for (const i in r.ing) { const m = need(i, seen); if (m) return m; }
+    return null;
+  };
+  const order = Object.values(D.techs).sort((a, b) => a.order - b.order);
+  let rounds = 0, left = order.length;
+  while (left && rounds++ < 100) {
+    for (const t of order) {
+      if (g.research.done[t.id] || g.techState(t.id) !== 'available') continue;
+      g.completeResearch(t.id, true);
+      left--;
+      for (const u of t.unlocks) {
+        const it = D.items[u];
+        if (it && it.sub === 'science') { const m = need(u, new Set()); assert(!m, 'pack ' + u + ' needs locked recipe ' + m + ' when unlocked by ' + t.id); }
+      }
+    }
+  }
+});
+
 console.log('Simulation tests');
 
 test('burner drill feeds a stone furnace directly', () => {

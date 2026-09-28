@@ -1,0 +1,13 @@
+{
+  "name": "cogworks-frontier",
+  "version": "1.0.0",
+  "description": "A browser factory-building game: mine, smelt, automate, research and launch an orbital uplink.",
+  "private": true,
+  "scripts": {
+    "test": "node tests/sim.test.js",
+    "perf": "node tests/perf.js",
+    "build": "node tools/build.mjs",
+    "serve": "npx http-server -p 8080 -c-1 ."
+  },
+  "license": "MIT"
+}

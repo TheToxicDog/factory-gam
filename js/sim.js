@@ -72,6 +72,11 @@
   }
   FG.Stats = Stats;
 
+  // Which caches each building kind can affect.
+  const DIRTY_POWER = { pole: 1, drill: 1, pumpjack: 1, furnace: 1, crafter: 1, lab: 1, inserter: 1, beacon: 1, uplink: 1, laser: 1, engine: 1, solar: 1, accumulator: 1 };
+  const DIRTY_FLUID = { pipe: 1, pipe_ug: 1, tank: 1, offshore: 1, boiler: 1, engine: 1, pumpjack: 1, crafter: 1 };
+  const DIRTY_FX = { beacon: 1, drill: 1, pumpjack: 1, furnace: 1, crafter: 1, lab: 1 };
+
   // --------------------------------------------------------------------- game
   class Game {
     constructor(opts) {
@@ -116,14 +121,14 @@
       this.objectives = new FG.Objectives(this);
     }
 
+    // Flag the topology caches affected by a change to an entity of this kind.
     markDirty(kind) {
       if (kind === 'fluid') { this.dirty.fluid = true; return; }
       if (kind === 'fx') { this.dirty.fx = true; return; }
-      if (kind === 'belt' || kind === 'underground' || kind === 'splitter') this.dirty.belts = true;
-      // Neighbouring belts may change shape when anything belt-like changes.
-      this.dirty.power = true;
-      this.dirty.fluid = true;
-      this.dirty.fx = true;
+      if (kind === 'belt' || kind === 'underground' || kind === 'splitter') { this.dirty.belts = true; return; }
+      if (DIRTY_POWER[kind]) this.dirty.power = true;
+      if (DIRTY_FLUID[kind]) this.dirty.fluid = true;
+      if (DIRTY_FX[kind]) this.dirty.fx = true;
     }
 
     recipeEnabled(rid) {
@@ -442,7 +447,8 @@
     }
     applySettings(ent, s) {
       const pr = D.protos[ent.p];
-      if (s.recipe && pr.kind === 'crafter' && pr.cats.indexOf(D.recipes[s.recipe].cat) >= 0 && this.recipeEnabled(s.recipe)) {
+      const sr = s.recipe && D.recipes[s.recipe];
+      if (sr && pr.kind === 'crafter' && pr.cats.indexOf(sr.cat) >= 0 && this.recipeEnabled(s.recipe) && (pr.fb || !Object.keys(sr.fin).length)) {
         this.giveOrDrop(FG.machines.setRecipe(this, ent, s.recipe));
       }
       if (s.filter !== undefined && (pr.filter || pr.kind === 'splitter')) ent.filter = s.filter;

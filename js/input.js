@@ -252,10 +252,30 @@
     // ---------------------------------------------------------- building
     previewFor(itemId, dir) {
       const pr = D.protos[D.items[itemId].place];
-      const d = pr.rotatable ? dir : 0;
+      let d = pr.rotatable ? dir : 0;
+      const [fw0, fh0] = FG.footprint(pr, d);
+      const x = Math.round(this.mouse.wx - fw0 / 2), y = Math.round(this.mouse.wy - fh0 / 2);
+      d = this.smartDir(pr, x, y, d);
       const [fw, fh] = FG.footprint(pr, d);
-      const x = Math.round(this.mouse.wx - fw / 2), y = Math.round(this.mouse.wy - fh / 2);
       return { p: pr.id, x, y, dir: d, fw, fh };
+    }
+
+    // Orient pumps toward water and pair tunnel pipes automatically.
+    smartDir(pr, x, y, d) {
+      const g = this.g, w = g.world;
+      if (pr.kind === 'offshore') {
+        const ok = (dd) => w.isWater(x - FG.DX[dd], y - FG.DY[dd]) && w.inBounds(x - FG.DX[dd], y - FG.DY[dd]);
+        if (!ok(d)) for (let k = 0; k < 4; k++) if (ok(k)) return k;
+      }
+      if (pr.kind === 'pipe_ug') {
+        for (let k = 1; k <= pr.maxDist; k++) {
+          const e = FG.entAt(g, x + FG.DX[d] * k, y + FG.DY[d] * k);
+          if (!e || e.p !== 'pipe_ug') continue;
+          if (e.dir === d) return FG.opposite(d);
+          break;
+        }
+      }
+      return d;
     }
 
     tryBuild(itemId, x, y, dir, ghost, settings) {

@@ -736,7 +736,7 @@
           };
           const picker = h('div', { class: 'recipe-picker', hidden: !!ent.recipe });
           if (pr.kind !== 'uplink') {
-            const list = Object.values(D.recipes).filter((r) => pr.cats.indexOf(r.cat) >= 0 && g.recipeEnabled(r.id))
+            const list = Object.values(D.recipes).filter((r) => pr.cats.indexOf(r.cat) >= 0 && g.recipeEnabled(r.id) && (pr.fb || !Object.keys(r.fin).length))
               .sort((a, b) => ((D.items[a.main] || { order: 999 }).order - (D.items[b.main] || { order: 999 }).order));
             for (const r of list) {
               const el = slotEl(r.main, undefined, {

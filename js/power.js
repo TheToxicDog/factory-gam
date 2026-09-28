@@ -39,7 +39,7 @@
       const pr = D.protos[p.p];
       const [x, y] = poleCenter(p);
       const cands = [];
-      near(x, y, 30, (o) => {
+      near(x, y, pr.reach, (o) => {
         if (o === p) return;
         const reach = Math.min(pr.reach, D.protos[o.p].reach);
         const [ox, oy] = poleCenter(o);

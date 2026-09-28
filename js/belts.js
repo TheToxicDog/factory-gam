@@ -107,40 +107,45 @@
       e.halves[0].tgt = e.halves[1].tgt = { mode: 'none' };
     }
     // Reverse topological order: downstream nodes update before the nodes feeding them.
-    const down = new Map();
-    const up = new Map();
-    for (const n of nodes) { down.set(n, new Set()); up.set(n, []); }
-    const link = (a, b) => { if (b && down.has(b) && a !== b && !down.get(a).has(b)) { down.get(a).add(b); up.get(b).push(a); } };
+    const N = nodes.length;
+    for (let i = 0; i < N; i++) nodes[i]._i = i;
+    const downCount = new Int32Array(N);
+    const upHead = new Int32Array(N).fill(-1);
+    const upNext = new Int32Array(N * 2 + 2);
+    const upFrom = new Int32Array(N * 2 + 2);
+    let E = 0;
+    const link = (a, b) => {
+      if (!b || b._i === undefined || a === b || nodes[b._i] !== b) return;
+      // skip duplicate edges (a splitter half feeding the same node twice)
+      for (let e = upHead[b._i]; e >= 0; e = upNext[e]) if (upFrom[e] === a._i) return;
+      downCount[a._i]++;
+      upFrom[E] = a._i; upNext[E] = upHead[b._i]; upHead[b._i] = E; E++;
+    };
     for (const n of nodes) {
       if (n.part !== undefined) {
         for (const o of n.owner.outs) if (o.node) link(n, o.node);
       } else if (n.tgt && n.tgt.node) link(n, n.tgt.node);
     }
-    const remaining = new Map();
-    const queue = [];
-    for (const n of nodes) {
-      remaining.set(n, down.get(n).size);
-      if (!down.get(n).size) queue.push(n);
-    }
+    const queue = new Int32Array(N);
+    let qh = 0, qt = 0;
+    const done = new Uint8Array(N);
+    for (let i = 0; i < N; i++) if (!downCount[i]) queue[qt++] = i;
     const order = [];
-    const done = new Set();
-    let qi = 0;
-    const release = (n) => {
-      for (const u of up.get(n)) {
-        const r = remaining.get(u) - 1;
-        remaining.set(u, r);
-        if (r === 0 && !done.has(u)) queue.push(u);
+    let scan = 0;
+    while (order.length < N) {
+      let i;
+      if (qh < qt) i = queue[qh++];
+      else {
+        // Cycle: break it at the first remaining node.
+        while (done[scan]) scan++;
+        i = scan;
       }
-    };
-    while (order.length < nodes.length) {
-      if (qi < queue.length) {
-        const n = queue[qi++];
-        if (done.has(n)) continue;
-        done.add(n); order.push(n); release(n);
-      } else {
-        // Cycle: break it at any remaining node.
-        const n = nodes.find((m) => !done.has(m));
-        done.add(n); order.push(n); release(n);
+      if (done[i]) continue;
+      done[i] = 1;
+      order.push(nodes[i]);
+      for (let e = upHead[i]; e >= 0; e = upNext[e]) {
+        const u = upFrom[e];
+        if (--downCount[u] === 0 && !done[u]) queue[qt++] = u;
       }
     }
     g.beltOrder = order;
