@@ -70,6 +70,8 @@
     autoHotbar();
     app.ui.updateObjective(true);
     app.onWindowChange();
+    app.renderer.canvas.focus({ preventScroll: true });
+    app.ui.setKeyboardHint(!document.hasFocus());
   };
 
   // Keep the running game safe before replacing it.
@@ -98,6 +100,7 @@
     app.game = null;
     document.getElementById('hud').hidden = true;
     document.getElementById('title').hidden = false;
+    app.ui.setKeyboardHint(false);
     buildTitleMenu();
     // The autosave finishes in the background; offer Continue once it has.
     if (saving) saving.then(() => { if (app.titleShown) buildTitleMenu(); });

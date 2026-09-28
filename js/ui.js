@@ -484,6 +484,13 @@
       return n;
     }
 
+    // Shown while keystrokes are not reaching the game (focus is on another window or frame).
+    setKeyboardHint(on) {
+      const el = this.$('focus-hint');
+      if (!el) return;
+      el.hidden = !(on && this.app.game && !this.app.titleShown);
+    }
+
     // ------------------------------------------------------ toasts/alerts
     toast(text, kind) {
       if (kind === 'warn' && FG.sfx) FG.sfx.play('warn');

@@ -19,6 +19,17 @@
       this.lastWarn = 0;
       this.zDone = new Set(); // targets that already got one item during this Z press
       const cv = app.renderer.canvas;
+      // The canvas holds keyboard focus while you play. When the game runs inside a frame (as
+      // an embedded artifact), focus can move to the host page, and then keys stop reaching the
+      // game. Any click that isn't on a text field takes it back.
+      cv.tabIndex = -1;
+      window.addEventListener('mousedown', (e) => {
+        const t = e.target;
+        if (t && t.closest && t.closest('input, textarea, select')) return;
+        if (document.activeElement !== cv || !document.hasFocus()) cv.focus({ preventScroll: true });
+      }, true);
+      window.addEventListener('focus', () => app.ui && app.ui.setKeyboardHint(false));
+      window.addEventListener('blur', () => app.ui && app.ui.setKeyboardHint(true));
       cv.addEventListener('mousedown', (e) => this.onDown(e));
       window.addEventListener('mouseup', (e) => this.onUp(e));
       window.addEventListener('mousemove', (e) => this.onMove(e));
@@ -58,6 +69,15 @@
         return;
       }
       const ui = app.ui;
+      // Tab would move focus to buttons, or out of the game altogether when it is embedded.
+      if (code === 'Tab') { e.preventDefault(); return; }
+      // A button clicked earlier keeps focus; Space or Enter would press it again (and the
+      // objective's Skip button would skip an objective), so hand them to the game instead.
+      const act = document.activeElement;
+      if (act && act.tagName === 'BUTTON' && (code === 'Space' || code === 'Enter' || code === 'NumpadEnter')) {
+        e.preventDefault();
+        act.blur();
+      }
       if (e.altKey && (code === 'AltLeft' || code === 'AltRight')) { e.preventDefault(); app.view.altMode = !app.view.altMode; return; }
       if (e.ctrlKey || e.metaKey) {
         if (code === 'KeyC') { e.preventDefault(); this.mode = 'copy'; ui.toast('Drag over buildings to copy them', 'info'); }
@@ -178,7 +198,6 @@
       if (app.ui.held) { app.ui.dropHeld(); e.preventDefault(); return; } // clicking away puts a split stack back
       if (app.ui.win && app.ui.win.name !== 'entity' && app.ui.win.name !== 'inventory') app.ui.close();
       e.preventDefault();
-      this.app.renderer.canvas.focus && this.app.renderer.canvas.focus();
       const m = this.mouse;
       if (e.button === 2) {
         m.right = true;

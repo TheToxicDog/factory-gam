@@ -412,3 +412,12 @@ textarea { min-height: 120px; resize: vertical; user-select: text; -webkit-user-
 @media (prefers-reduced-motion: reduce) {
   .toast { animation: none; }
 }
+
+/* ---------------------------------------------------------- focus */
+canvas:focus { outline: none; }
+#focus-hint {
+  position: fixed; left: 50%; top: 64px; transform: translateX(-50%); z-index: 40;
+  padding: 8px 14px; background: rgba(20, 18, 15, 0.92); border: 1px solid var(--amber); border-radius: 2px;
+  color: var(--text); font-size: 14px; font-weight: 600; pointer-events: none;
+}
+#focus-hint[hidden] { display: none; }
