@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Cogworks Frontier</title>
+<meta name="description" content="A browser factory-building game: mine, smelt, automate, research and launch an orbital uplink.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@400;500;600;700&family=Big+Shoulders+Display:wght@700;800;900&family=Big+Shoulders+Stencil+Display:wght@800;900&family=IBM+Plex+Mono:wght@400;600&display=swap">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div id="app">
+  <canvas id="world" aria-label="Game world"></canvas>
+
+  <div id="hud" hidden>
+    <div id="hud-left">
+      <section id="hud-objective" class="card" aria-live="polite"></section>
+      <section id="hud-research" class="card" title="Open research (T)"></section>
+      <div id="alerts"></div>
+    </div>
+    <div id="hud-right">
+      <div id="minimap-wrap" class="card" title="Open map (M)"><canvas id="minimap" width="184" height="184"></canvas></div>
+      <div id="hud-clock" class="card"></div>
+    </div>
+    <div id="hud-hover" class="card" hidden></div>
+    <div id="hud-queue"></div>
+    <div id="hud-bottom">
+      <div id="hud-vitals" class="card"></div>
+      <div id="hotbar" class="card"></div>
+      <div id="hud-hand" class="card"></div>
+    </div>
+    <div id="hud-keys"><kbd>E</kbd> inventory · <kbd>T</kbd> research · <kbd>H</kbd> controls</div>
+    <div id="toasts"></div>
+  </div>
+
+  <div id="windows"></div>
+
+  <div id="title">
+    <div class="inner">
+      <h1 class="logo"><span class="a">Cogworks</span><span class="b">Frontier</span></h1>
+      <div class="stripe" aria-hidden="true"></div>
+      <p class="lede">Crash-land on an untouched world. Mine by hand, then build machines that mine for you, belts that carry for you, and labs that think for you, until the whole planet is one machine aimed at orbit.</p>
+      <div class="menu" id="title-menu"></div>
+      <p class="touch-note" id="touch-note" hidden>This game needs a keyboard and mouse.</p>
+      <p class="foot">WASD to walk · right-click to mine · E for inventory · H for all controls</p>
+    </div>
+  </div>
+
+  <div id="tooltip" hidden></div>
+</div>
+
+<script src="js/core.js"></script>
+<script src="js/data.js"></script>
+<script src="js/world.js"></script>
+<script src="js/entities.js"></script>
+<script src="js/belts.js"></script>
+<script src="js/fluids.js"></script>
+<script src="js/power.js"></script>
+<script src="js/machines.js"></script>
+<script src="js/combat.js"></script>
+<script src="js/objectives.js"></script>
+<script src="js/sim.js"></script>
+<script src="js/save.js"></script>
+<script src="js/sprites.js"></script>
+<script src="js/icons.js"></script>
+<script src="js/render.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/input.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>

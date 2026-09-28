@@ -35,6 +35,7 @@
       this.spawnY = size >> 1;
       this.nestSpots = [];
       this.generate(opts);
+      this.modified = new Set(); // tiles whose resource changed since generation (for saves)
     }
 
     idx(x, y) { return y * this.W + x; }
@@ -50,6 +51,7 @@
       const r = this.res[i];
       return (r === RES.TREE || r === RES.ROCK) && this.amt[i] > 0;
     }
+    mark(x, y) { this.modified.add(y * this.W + x); }
     touchChunk(x, y) {
       const c = ((y / FG.CHUNK) | 0) * this.CW + ((x / FG.CHUNK) | 0);
       this.chunkVersion[c]++;
@@ -91,9 +93,9 @@
           if (e < 0.3) t = T.DEEP;
           else if (e < 0.34) t = T.WATER;
           else if (e < 0.355) t = T.SAND;
-          else if (m < 0.36) t = T.SAND;
-          else if (m < 0.43) t = T.DIRT;
-          else if (m < 0.52) t = T.DRYGRASS;
+          else if (m < 0.3) t = T.SAND;
+          else if (m < 0.37) t = T.DIRT;
+          else if (m < 0.45) t = T.DRYGRASS;
           else t = T.GRASS;
           this.terrain[i] = t;
           this.variant[i] = (FG.hash2(x, y, seed) * 256) | 0;

@@ -63,7 +63,7 @@
       for (let yy = y; yy < y + 2; yy++) for (let xx = x; xx < x + 2; xx++) {
         const i = yy * w.W + xx;
         this.nestTiles.set(i, n);
-        if (w.res[i] === FG.RES.TREE || w.res[i] === FG.RES.ROCK) { w.res[i] = 0; w.amt[i] = 0; }
+        if (w.res[i] === FG.RES.TREE || w.res[i] === FG.RES.ROCK) { w.res[i] = 0; w.amt[i] = 0; if (w.modified) w.modified.add(i); }
       }
       return n;
     }

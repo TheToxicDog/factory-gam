@@ -37,6 +37,7 @@
       const r = w.res[i];
       if (r >= FG.RES.IRON && r <= FG.RES.STONE && w.amt[i] > 0) {
         w.amt[i]--;
+        w.modified.add(i);
         if (w.amt[i] <= 0) { w.res[i] = 0; w.amt[i] = 0; w.touchChunk(x, y); }
         e.cursor = (idx + 1) % total;
         return FG.RES_ITEM[r];

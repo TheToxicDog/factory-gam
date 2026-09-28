@@ -65,7 +65,7 @@
       n.pair = null;
       n.curveIn = null;
       n.inDir = n.dir;
-      n.out = null;
+      n.tgt = null;
       if (n.part !== undefined) n.dir = n.owner.dir;
     }
     // Pair tunnel belts.
@@ -98,13 +98,13 @@
     // Output targets.
     for (const n of nodes) {
       const k = kindOf(n);
-      if (k === 'ug_in') { n.out = n.pair ? { node: n.pair, mode: 'cont' } : { mode: 'none' }; continue; }
+      if (k === 'ug_in') { n.tgt = n.pair ? { node: n.pair, mode: 'cont' } : { mode: 'none' }; continue; }
       if (k === 'split') continue; // splitters resolve outputs per half below
-      n.out = targetFrom(g, n, n.x, n.y, n.dir);
+      n.tgt = targetFrom(g, n, n.x, n.y, n.dir);
     }
     for (const e of g.byKind.splitter || []) {
       e.outs = e.halves.map((h) => targetFrom(g, h, h.x, h.y, e.dir));
-      e.halves[0].out = e.halves[1].out = { mode: 'none' };
+      e.halves[0].tgt = e.halves[1].tgt = { mode: 'none' };
     }
     // Reverse topological order: downstream nodes update before the nodes feeding them.
     const down = new Map();
@@ -114,7 +114,7 @@
     for (const n of nodes) {
       if (n.part !== undefined) {
         for (const o of n.owner.outs) if (o.node) link(n, o.node);
-      } else if (n.out && n.out.node) link(n, n.out.node);
+      } else if (n.tgt && n.tgt.node) link(n, n.tgt.node);
     }
     const remaining = new Map();
     const queue = [];
@@ -283,7 +283,7 @@
         updateSplitterLane(s, n, 1);
       } else {
         if (n.dead) continue;
-        const out = n.out || NONE;
+        const out = n.tgt || NONE;
         updateLane(n, n.lanes[0], 0, out);
         updateLane(n, n.lanes[1], 1, out);
       }

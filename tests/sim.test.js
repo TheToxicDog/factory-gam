@@ -24,7 +24,7 @@ function newGame(opts) {
 function ore(g, type, x0, y0, w, h, amt) {
   for (let y = y0; y < y0 + h; y++) for (let x = x0; x < x0 + w; x++) {
     const i = y * g.world.W + x;
-    g.world.res[i] = FG.RES[type]; g.world.amt[i] = amt || 1000;
+    g.world.res[i] = FG.RES[type]; g.world.amt[i] = amt || 1000; g.world.modified.add(i);
   }
 }
 function water(g, x0, y0, w, h) {
@@ -290,18 +290,30 @@ if (FG.save) {
     const g = newGame();
     ore(g, 'IRON', 100, 100, 2, 2);
     const d = place(g, 'burner_drill', 100, 100, E);
-    place(g, 'stone_furnace', 102, 100);
+    const f = place(g, 'stone_furnace', 102, 100);
     FG.insertItem(g, d, 'coal', 10, 'direct');
+    FG.insertItem(g, f, 'coal', 10, 'direct');
     g.queueResearch('automation');
     run(g, 600);
+    const asm = place(g, 'assembler_1', 110, 110);
+    FG.machines.setRecipe(g, asm, 'iron_gear');
+    asm.out.iron_gear = 7; asm.inp.iron_plate = 9;
+    const belt = place(g, 'belt', 110, 115, E);
+    run(g, 1);
+    FG.belts.laneInsert(belt.lanes[0], 'coal', 0.5, 1);
+    const plates = asm.inp.iron_plate;
     const json = FG.save.serialize(g);
     const g2 = FG.save.deserialize(json);
     assert(g2.ents.size === g.ents.size, 'entity count');
     assert(g2.world.amt[100 * g.world.W + 100] === g.world.amt[100 * g.world.W + 100], 'ore amounts preserved');
     assert(g2.research.current === 'automation', 'research preserved');
-    run(g2, 600);
+    const a2 = FG.entAt(g2, 110, 110);
+    assert(a2.out && a2.out.iron_gear === 7 && a2.inp.iron_plate === plates && a2.crafting === asm.crafting && a2.recipe === 'iron_gear', 'assembler contents preserved ' + JSON.stringify([a2.out, a2.inp]));
+    assert(FG.entAt(g2, 110, 115).lanes[0].ids[0] === 'coal', 'belt items preserved');
+    const before = f.out ? f.out.n : 0;
+    run(g2, 900);
     const f2 = FG.entAt(g2, 102, 100);
-    assert(f2.out && f2.out.n > 0, 'still smelting after load');
+    assert(f2.out && f2.out.n > before, 'still smelting after load: ' + before + ' -> ' + JSON.stringify(f2.out));
   });
 }
 

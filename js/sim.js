@@ -399,6 +399,7 @@
       this.player.inv.add(id, n);
       this.stats.produce(id, n);
       w.amt[i] -= n;
+      w.modified.add(i);
       if (w.amt[i] <= 0) { w.res[i] = 0; w.amt[i] = 0; w.touchChunk(x, y); }
       FG.emit('picked', id, n, x + 0.5, y + 0.5);
       FG.emit('inventory');

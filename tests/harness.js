@@ -6,7 +6,7 @@ const vm = require('vm');
 const SIM_FILES = ['core', 'data', 'world', 'entities', 'belts', 'fluids', 'power', 'machines', 'combat', 'objectives', 'sim', 'save'];
 
 function load() {
-  const ctx = { console, Math, Date, JSON, Object, Array, Map, Set, Float32Array, Int32Array, Uint8Array, Uint32Array, Uint16Array, Number, String, Error, performance };
+  const ctx = { Buffer, console, Math, Date, JSON, Object, Array, Map, Set, Float32Array, Int32Array, Uint8Array, Uint32Array, Uint16Array, Number, String, Error, performance };
   ctx.globalThis = ctx;
   vm.createContext(ctx);
   for (const f of SIM_FILES) {

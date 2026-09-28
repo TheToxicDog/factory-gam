@@ -176,6 +176,16 @@
     ent.fx = { speed: 0, prod: 0, power: 0, pollution: 0 };
   }
 
+  // Recompute derived geometry after loading a saved entity.
+  FG.initRuntime = function (ent) {
+    const pr = D.protos[ent.p];
+    ent.fx = { speed: 0, prod: 0, power: 0, pollution: 0 };
+    ent.status = 'idle';
+    if (pr.fb) computeFluidConns(ent);
+    if (pr.kind === 'drill') computeDrillOut(ent);
+    if (pr.kind === 'splitter') computeSplitterHalves(ent);
+  };
+
   // Registry bookkeeping shared by placement and loading.
   FG.registerEntity = function (g, ent) {
     g.ents.set(ent.id, ent);
