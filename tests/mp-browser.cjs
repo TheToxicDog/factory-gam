@@ -5,7 +5,9 @@ const { chromium } = require('playwright');
 (async () => {
   const url = process.argv[2] || 'http://localhost:8124/';
   const out = process.argv[3] || '.';
-  const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome' });
+  // A remote server is reached through the environment's proxy, if it has one.
+  const proxy = !/localhost|127\.0\.0\.1/.test(url) && (process.env.HTTPS_PROXY || process.env.HTTP_PROXY);
+  const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', proxy: proxy ? { server: proxy } : undefined, args: ['--ignore-certificate-errors'] });
   const errors = [];
   const check = (name, cond, info) => { console.log((cond ? '  ok   ' : '  FAIL ') + name + (info !== undefined ? '  ' + info : '')); if (!cond) errors.push(name); };
   async function player(name) {
