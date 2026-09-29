@@ -4,10 +4,15 @@
   "description": "A browser factory-building game: mine, smelt, automate, research and launch an orbital uplink.",
   "private": true,
   "scripts": {
-    "test": "node tests/sim.test.js",
+    "start": "node server/server.js",
+    "test": "node tests/sim.test.js && node tests/mp.test.js",
+    "test:mp": "node tests/mp.test.js",
     "perf": "node tests/perf.js",
     "build": "node tools/build.mjs",
     "serve": "npx http-server -p 8080 -c-1 ."
   },
-  "license": "MIT"
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  }
 }

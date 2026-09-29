@@ -282,6 +282,15 @@
         else this.$('hud-objective').classList.toggle('collapsed');
       });
       FG.on('objectives', () => { if (this.app.game && !this.app.titleShown) this.updateObjective(true); });
+      // Multiplayer: who is here, and chat.
+      this.$('hud-right').appendChild(h('div', { id: 'hud-players', class: 'card', hidden: true }));
+      const chatInput = h('input', { type: 'text', maxlength: '200', placeholder: 'Say something · Enter to send · Esc to close', 'aria-label': 'Chat message', hidden: true });
+      chatInput.addEventListener('keydown', (ev) => {
+        ev.stopPropagation();
+        if (ev.key === 'Enter') { this.app.net.say(chatInput.value); this.closeChat(); }
+        else if (ev.key === 'Escape') this.closeChat();
+      });
+      this.$('hud').appendChild(h('div', { id: 'hud-chat', hidden: true }, h('div', { class: 'log', 'aria-live': 'polite' }), chatInput));
     }
 
     updateObjective(force) {
@@ -331,7 +340,7 @@
       const light = g.daylight();
       const tod = light > 0.9 ? 'Day' : light > 0.1 ? (((g.tick + 2500) % 25000) / 25000 < 0.6 ? 'Dusk' : 'Dawn') : 'Night';
       const evo = g.opts.enemies === 'off' ? '' : ' · Evolution <b>' + (g.enemies.evo * 100).toFixed(1) + '%</b>';
-      const clk = '<span><b class="num">' + FG.fmtTime(g.tick) + '</b></span><span>' + tod + '</span><span>' + evo.replace(' · ', '') + '</span>' + (app.paused ? '<span style="color:var(--warn)">Paused</span>' : '');
+      const clk = '<span><b class="num">' + FG.fmtTime(g.tick) + '</b></span><span>' + tod + '</span><span>' + evo.replace(' · ', '') + '</span>' + (app.paused ? '<span style="color:var(--warn)">Paused</span>' : '') + (app.mp && app.net.ls.stalled ? '<span style="color:var(--warn)">Syncing…</span>' : '');
       if (this.$('hud-clock').dataset.k !== clk) { this.$('hud-clock').dataset.k = clk; this.$('hud-clock').innerHTML = clk; }
       // vitals
       const p = g.player;
@@ -376,6 +385,8 @@
       }
       this.updateHover();
       this.updateAlerts();
+      this.updateRoster();
+      this.renderChat();
       if (performance.now() - (this.lastAutoHotbar || 0) > 1000) { this.lastAutoHotbar = performance.now(); if (app.autoHotbar) app.autoHotbar(); }
       if (performance.now() - this.lastMini > 400) {
         this.lastMini = performance.now();
@@ -1102,13 +1113,13 @@
         tr.schedule.forEach((e, i) => {
           const stSel = h('select', { id: 'sched-station-' + i, 'aria-label': 'Stop' });
           for (const n of new Set(names.concat([e.station]))) stSel.appendChild(h('option', { value: n, text: n, selected: n === e.station }));
-          stSel.addEventListener('change', () => app.act({ t: 'sched', tr: tr.id, op: 'station', i, v: stSel.value }));
+          stSel.addEventListener('change', () => (this.schedEdit = performance.now()) && app.act({ t: 'sched', tr: tr.id, op: 'station', i, v: stSel.value }));
           const cond = h('select', { id: 'sched-cond-' + i, 'aria-label': 'Wait condition' });
           for (const [v, l] of [['full', 'until full'], ['empty', 'until empty'], ['time', 'for seconds'], ['inactive', 'until idle for seconds']]) cond.appendChild(h('option', { value: v, text: l, selected: v === e.cond }));
           const val = h('input', { type: 'number', id: 'sched-v-' + i, min: '1', max: '600', value: String(e.v || 10), style: 'width:64px', 'aria-label': 'Seconds' });
           val.hidden = e.cond !== 'time' && e.cond !== 'inactive';
-          cond.addEventListener('change', () => { app.act({ t: 'sched', tr: tr.id, op: 'cond', i, v: cond.value }); val.hidden = cond.value !== 'time' && cond.value !== 'inactive'; });
-          val.addEventListener('change', () => app.act({ t: 'sched', tr: tr.id, op: 'v', i, v: parseInt(val.value, 10) || 10 }));
+          cond.addEventListener('change', () => { this.schedEdit = performance.now(); app.act({ t: 'sched', tr: tr.id, op: 'cond', i, v: cond.value }); val.hidden = cond.value !== 'time' && cond.value !== 'inactive'; });
+          val.addEventListener('change', () => (this.schedEdit = performance.now()) && app.act({ t: 'sched', tr: tr.id, op: 'v', i, v: parseInt(val.value, 10) || 10 }));
           const cur = h('span', { class: 'num', style: 'width:18px;color:var(--amber)', text: '' });
           schedUpd.push(() => { cur.textContent = tr.cur === i && tr.mode === 'auto' ? '▶' : ''; });
           sched.appendChild(h('div', { class: 'sched-row' },
@@ -1126,13 +1137,16 @@
       const right = h('div', { class: 'pane' }, h('h3', { text: 'Your inventory' }), inv.el, h('div', { class: 'hint', text: 'Click fuel to load the locomotives, anything else goes into the wagons. Right-click moves half a stack.' }));
       w.body.append(h('div', { class: 'panes' }, left, right));
       let lastCars = tr.cars.map((c) => c.id + (c.flip ? 'f' : '')).join();
-      let lastSched = JSON.stringify(tr.schedule);
+      let lastSched = JSON.stringify(tr.schedule), lastLen = tr.schedule.length;
       w.update = () => {
         if (tr.dead) { this.close(); return; }
         const cars = tr.cars.map((c) => c.id + (c.flip ? 'f' : '')).join();
         if (cars !== lastCars) { lastCars = cars; renderCars(); }
+        // Redraw the schedule when stops come or go, or when it changed while you weren't
+        // editing it (another player, or a command landing after your edit).
         const sch = JSON.stringify(tr.schedule);
-        if (sch !== lastSched && !(document.activeElement && document.activeElement.closest && document.activeElement.closest('.sched-row'))) { lastSched = sch; renderSched(); }
+        const editing = performance.now() - (this.schedEdit || 0) < 1500 || (document.activeElement && document.activeElement.closest && document.activeElement.closest('.sched-row'));
+        if (sch !== lastSched && (tr.schedule.length !== lastLen || !editing)) { lastSched = sch; lastLen = tr.schedule.length; renderSched(); }
         if (seg.dataset.mode !== tr.mode) renderSeg();
         inv.update();
         const st = trainStatus(g, tr);
@@ -1396,8 +1410,23 @@
     // ------------------------------------------------------ menu windows
     build_menu() {
       const app = this.app;
-      const w = this.frame('menu', 'Paused');
       const b = (label, fn, cls) => h('button', { class: 'btn ' + (cls || ''), style: 'justify-content:flex-start;min-width:240px', text: label, onclick: fn });
+      if (app.mp) {
+        // A shared world keeps running while the menu is open.
+        const net = app.net;
+        const w = this.frame('menu', net.lobby ? net.lobby.name : 'Multiplayer', 'The world keeps running');
+        w.body.append(h('div', { style: 'display:flex;flex-direction:column;gap:8px' },
+          b('Resume', () => this.close(), 'primary'),
+          b('Save a copy to this browser', () => this.open('saves', 'save')),
+          b('Copy a save code of this world', () => this.open('savecode')),
+          b('Controls and tips', () => this.open('help')),
+          b(FG.sfx.enabled() ? 'Sound: on' : 'Sound: off', (ev) => { FG.sfx.setEnabled(!FG.sfx.enabled()); ev.target.textContent = FG.sfx.enabled() ? 'Sound: on' : 'Sound: off'; }),
+          net.owner ? b('Close this world for everyone', () => { if (confirm('Close "' + net.lobby.name + '" for everyone? It will be removed from the server.')) net.closeLobby(); }, 'danger') : null,
+          b('Leave world', () => { this.close(); app.showTitle(); })),
+        h('div', { class: 'hint', style: 'margin-top:10px', text: net.owner ? 'You host this world. It stays on the server when you leave, so you and others can come back to it.' : 'The world stays on the server when you leave; join it again from Multiplayer.' }));
+        return w;
+      }
+      const w = this.frame('menu', 'Paused');
       w.body.append(h('div', { style: 'display:flex;flex-direction:column;gap:8px' },
         b('Resume', () => this.close(), 'primary'),
         b('Save game', () => this.open('saves', 'save')),
@@ -1483,6 +1512,218 @@
           app.newGame({ seed: s, enemies: enemies.value, richness: parseFloat(rich.value), size: parseInt(size.value, 10) });
         } })));
       return w;
+    }
+
+    // ------------------------------------------------------- multiplayer
+    profileRow() {
+      const net = this.app.net;
+      const prof = net.profile;
+      const name = h('input', { type: 'text', id: 'mp-name', value: prof.name, maxlength: '20', placeholder: 'Engineer', 'aria-label': 'Your name', autocomplete: 'nickname' });
+      name.addEventListener('change', () => net.setProfile(name.value, null));
+      const sw = h('div', { class: 'swatches', role: 'radiogroup', 'aria-label': 'Your colour' });
+      const draw = () => {
+        sw.innerHTML = '';
+        for (const c of net.colors) {
+          sw.appendChild(h('button', { class: 'swatch' + (net.profile.color === c ? ' on' : ''), style: 'background:' + c, role: 'radio', 'aria-checked': net.profile.color === c ? 'true' : 'false', 'aria-label': 'Colour ' + c, onclick: () => { net.setProfile(name.value, c); draw(); } }));
+        }
+      };
+      draw();
+      return { el: h('div', { class: 'form mp-profile' }, h('label', { for: 'mp-name', text: 'Your name' }), name, h('span', { class: 'label-like', text: 'Colour' }), sw), name };
+    }
+
+    build_multiplayer() {
+      const app = this.app, net = app.net;
+      const w = this.frame('multiplayer', 'Multiplayer', net.server || '');
+      const prof = this.profileRow();
+      const status = h('div', { class: 'mp-status hint' });
+      const list = h('div', { class: 'slots-list mp-list', 'aria-live': 'polite' });
+      const refresh = h('button', { class: 'btn small', text: 'Refresh', onclick: () => load() });
+      const server = h('input', { type: 'text', id: 'mp-server', value: net.server, placeholder: 'host:port', style: 'max-width:220px' });
+      const useServer = h('button', { class: 'btn small', text: 'Use', onclick: () => { net.setServer(server.value); w.header.querySelector('.sub').textContent = net.server; load(); } });
+      const fmtPlayed = (t) => FG.fmtTime(t || 0);
+      const busy = (btn, on) => { btn.disabled = on; btn.dataset.label = btn.dataset.label || btn.textContent; btn.textContent = on ? 'Connecting…' : btn.dataset.label; };
+      const doJoin = async (l, btn) => {
+        net.setProfile(prof.name.value, null);
+        if (l.access === 'password') { this.open('mpjoin', l); return; }
+        busy(btn, true);
+        try { await net.join(l.id); } catch (e) { this.toast(e.message, 'bad'); busy(btn, false); }
+      };
+      const row = (l) => {
+        const locked = l.access === 'password';
+        const who = l.players ? l.players + ' of ' + l.max + ' playing' + (l.names && l.names.length ? ': ' + l.names.join(', ') : '') : 'Nobody playing right now';
+        const bits = [l.size + '×' + l.size, 'seed ' + l.seed, { normal: 'enemies', peaceful: 'peaceful enemies', off: 'no enemies' }[l.enemies] || '', 'played ' + fmtPlayed(l.played)].filter(Boolean).join(' · ');
+        const btn = h('button', { class: 'btn small primary', text: locked ? 'Join (password)' : 'Join' });
+        btn.addEventListener('click', () => doJoin(l, btn));
+        return h('div', { class: 'srow mp-row' + (l.players ? ' live' : '') },
+          h('span', { class: 'mp-access ' + (locked ? 'locked' : 'open'), title: locked ? 'Password protected' : 'Public', 'aria-label': locked ? 'Password protected' : 'Public', text: locked ? '🔒' : '●' }),
+          h('div', { class: 'meta' }, h('b', { text: l.name }), h('span', { class: 'mp-host', text: ' hosted by ' + l.host }),
+            h('div', { class: 'mp-who' + (l.players ? ' on' : ''), text: who }), h('div', { class: 'mp-bits', text: bits })),
+          btn);
+      };
+      let timer = null, seq = 0;
+      const load = async () => {
+        const my = ++seq;
+        if (!net.server) { status.textContent = 'This page was opened from a file. Enter the address of a Cogworks server below.'; list.innerHTML = ''; return; }
+        try {
+          const r = await net.fetchLobbies();
+          if (my !== seq || !this.isOpen('multiplayer')) return;
+          const lobbies = r.lobbies || [];
+          list.innerHTML = '';
+          if (!lobbies.length) list.appendChild(h('div', { class: 'srow mp-empty' }, h('div', { class: 'meta', text: 'No worlds are hosted here yet. Host the first one: your friends will see it in this list.' })));
+          for (const l of lobbies) list.appendChild(row(l));
+          status.textContent = lobbies.length + ' world' + (lobbies.length === 1 ? '' : 's') + ' · ' + (r.online || 0) + ' player' + (r.online === 1 ? '' : 's') + ' online';
+        } catch (e) {
+          if (my !== seq) return;
+          status.textContent = 'Could not reach the server at ' + net.server + ' (' + e.message + ').';
+          list.innerHTML = '';
+        }
+      };
+      w.body.append(h('div', { class: 'pane mp-pane' },
+        h('h3', { text: 'You' }), prof.el,
+        h('div', { class: 'pane-head', style: 'margin-top:6px' }, h('h3', { text: 'Worlds on this server' }), refresh), status, list,
+        h('details', { class: 'mp-advanced' }, h('summary', { text: 'Server' }), h('div', { class: 'rowx', style: 'gap:8px;margin-top:6px' }, server, useServer))),
+      h('div', { class: 'actions' }, h('button', { class: 'btn', text: 'Back', onclick: () => this.close() }),
+        h('button', { class: 'btn primary', text: 'Host a world', onclick: () => { net.setProfile(prof.name.value, null); this.open('mphost'); } })));
+      load();
+      timer = setInterval(load, 4000);
+      w.onClose = () => clearInterval(timer);
+      return w;
+    }
+
+    build_mphost() {
+      const app = this.app, net = app.net;
+      const w = this.frame('mphost', 'Host a world');
+      const who = (net.profile.name || 'Engineer');
+      const name = h('input', { type: 'text', id: 'mh-name', value: who + '\'s world', maxlength: '40' });
+      let access = 'public', source = 'new';
+      const pass = h('input', { type: 'text', id: 'mh-pass', maxlength: '64', placeholder: 'Password to join', autocomplete: 'off', hidden: true });
+      const accSeg = h('div', { class: 'seg', role: 'radiogroup', 'aria-label': 'Who can join' });
+      const drawAcc = () => {
+        accSeg.innerHTML = '';
+        for (const [v, l] of [['public', 'Public'], ['password', 'Password']]) accSeg.appendChild(h('button', { class: access === v ? 'on' : '', role: 'radio', 'aria-checked': access === v ? 'true' : 'false', text: l, onclick: () => { access = v; pass.hidden = v !== 'password'; drawAcc(); if (v === 'password') pass.focus(); } }));
+      };
+      drawAcc();
+      const srcSeg = h('div', { class: 'seg', role: 'radiogroup', 'aria-label': 'World' });
+      const seed = h('input', { type: 'text', id: 'mh-seed', value: String((Math.random() * 1e6) | 0), inputmode: 'numeric' });
+      const enemies = h('select', { id: 'mh-enemies' }, h('option', { value: 'normal', text: 'Normal: pollution provokes attacks' }), h('option', { value: 'peaceful', text: 'Peaceful: hives only defend themselves' }), h('option', { value: 'off', text: 'None: no hives at all' }));
+      const rich = h('select', { id: 'mh-rich' }, h('option', { value: '1', text: 'Normal' }), h('option', { value: '2', text: 'Rich (double ore)' }), h('option', { value: '0.6', text: 'Poor' }));
+      const size = h('select', { id: 'mh-size' }, h('option', { value: '512', text: '512 × 512 tiles' }), h('option', { value: '384', text: '384 × 384 (faster)' }), h('option', { value: '768', text: '768 × 768 (huge)' }));
+      const saves = FG.save.list().filter((m) => !m.empty);
+      const saveSel = h('select', { id: 'mh-save' }, saves.map((m) => h('option', { value: m.slot, text: (m.slot === 'auto' ? 'Autosave' : 'Slot ' + m.slot) + ' · played ' + FG.fmtTime(m.tick) + ' · ' + new Date(m.when).toLocaleDateString() })));
+      const newRows = [h('label', { for: 'mh-seed', text: 'Map seed' }), seed, h('label', { for: 'mh-enemies', text: 'Enemies' }), enemies, h('label', { for: 'mh-rich', text: 'Resources' }), rich, h('label', { for: 'mh-size', text: 'Map size' }), size];
+      const saveRows = [h('label', { for: 'mh-save', text: 'Save' }), saves.length ? saveSel : h('div', { class: 'hint', text: 'No saves in this browser yet. Play single player and save, then host it here.' })];
+      const drawSrc = () => {
+        srcSeg.innerHTML = '';
+        for (const [v, l] of [['new', 'New world'], ['save', 'One of my saves']]) srcSeg.appendChild(h('button', { class: source === v ? 'on' : '', role: 'radio', 'aria-checked': source === v ? 'true' : 'false', text: l, onclick: () => { source = v; drawSrc(); } }));
+        for (const el of newRows) el.hidden = source !== 'new';
+        for (const el of saveRows) el.hidden = source !== 'save';
+      };
+      const go = h('button', { class: 'btn primary', text: 'Host world' });
+      go.addEventListener('click', async () => {
+        const opts = { name: name.value.trim() || who + '\'s world', access };
+        if (access === 'password') {
+          if (!pass.value) { this.toast('Choose a password, or make the world public', 'warn'); pass.focus(); return; }
+          opts.password = pass.value;
+        }
+        go.disabled = true; go.textContent = 'Starting…';
+        try {
+          if (source === 'save') {
+            if (!saves.length) throw new Error('Pick a save first');
+            const raw = localStorage.getItem('cogworks-save-' + saveSel.value);
+            if (!raw) throw new Error('That save slot is empty');
+            opts.save = raw;
+          } else {
+            opts.world = { seed: parseInt(seed.value.replace(/\D/g, ''), 10) || ((Math.random() * 1e6) | 0), enemies: enemies.value, richness: parseFloat(rich.value), size: parseInt(size.value, 10) };
+          }
+          await net.host(opts);
+          this.toast('Hosting "' + opts.name + '"' + (access === 'password' ? ' · friends need the password to join' : ' · anyone on the server can join'), 'good');
+        } catch (e) {
+          this.toast(e.message, 'bad');
+          go.disabled = false; go.textContent = 'Host world';
+        }
+      });
+      w.body.append(h('div', { class: 'form' },
+        h('label', { for: 'mh-name', text: 'World name' }), name,
+        h('span', { class: 'label-like', text: 'Who can join' }), h('div', { class: 'rowx', style: 'gap:8px' }, accSeg, pass),
+        h('span', { class: 'label-like', text: 'World' }), srcSeg,
+        newRows, saveRows),
+      h('div', { class: 'hint', style: 'margin-top:10px', text: 'The world runs on the server, so it keeps going and stays available after you leave. Everyone builds in the same world and shares research.' }),
+      h('div', { class: 'actions' }, h('button', { class: 'btn', text: 'Back', onclick: () => this.open('multiplayer') }), go));
+      drawSrc();
+      setTimeout(() => name.select(), 0);
+      return w;
+    }
+
+    build_mpjoin(l) {
+      const net = this.app.net;
+      const w = this.frame('mpjoin', 'Join ' + l.name, 'hosted by ' + l.host);
+      const pass = h('input', { type: 'password', id: 'mj-pass', maxlength: '64', autocomplete: 'off' });
+      const err = h('div', { class: 'hint', style: 'color:var(--bad)', 'aria-live': 'polite' });
+      const go = h('button', { class: 'btn primary', text: 'Join' });
+      const join = async () => {
+        go.disabled = true; go.textContent = 'Connecting…'; err.textContent = '';
+        try { await net.join(l.id, pass.value); }
+        catch (e) { err.textContent = e.message; go.disabled = false; go.textContent = 'Join'; pass.select(); }
+      };
+      go.addEventListener('click', join);
+      pass.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') join(); });
+      w.body.append(h('div', { class: 'form' }, h('label', { for: 'mj-pass', text: 'Password' }), pass), err,
+        h('div', { class: 'actions' }, h('button', { class: 'btn', text: 'Back', onclick: () => this.open('multiplayer') }), go));
+      setTimeout(() => pass.focus(), 0);
+      return w;
+    }
+
+    // Players online and chat, shown in shared worlds.
+    updateRoster() {
+      const el = this.$('hud-players');
+      const net = this.app.net;
+      if (!this.app.mp || !net.lobby) { el.hidden = true; return; }
+      el.hidden = false;
+      const key = net.lobby.name + '|' + net.roster.map((p) => p.pid + p.name + p.ping + (p.host ? 'h' : '')).join(',');
+      if (el.dataset.k === key) return;
+      el.dataset.k = key;
+      el.innerHTML = '';
+      const g = this.g;
+      el.append(h('div', { class: 'eyebrow', text: net.lobby.name }),
+        h('ul', null, net.roster.map((p) => {
+          const pl = g && g.players.get(p.pid);
+          return h('li', { class: p.pid === net.ls.pid ? 'me' : '' }, h('i', { style: 'background:' + (pl ? pl.color : '#888') }), h('span', { class: 'n', text: p.name + (p.host ? ' ★' : '') }), h('span', { class: 'num ping', text: p.ping ? p.ping + ' ms' : '' }));
+        })));
+    }
+    onChat() { this.chatAt = performance.now(); this.renderChat(); }
+    renderChat() {
+      const box = this.$('hud-chat');
+      const net = this.app.net;
+      if (!this.app.mp) { box.hidden = true; return; }
+      const now = performance.now();
+      const recent = net.chat.filter((m) => this.chatOpen || now - m.at < 12000).slice(-8);
+      box.hidden = !recent.length && !this.chatOpen;
+      const log = box.querySelector('.log');
+      const key = recent.map((m) => m.at).join(',') + (this.chatOpen ? 'o' : '');
+      if (log.dataset.k === key) return;
+      log.dataset.k = key;
+      log.innerHTML = '';
+      for (const m of recent) log.appendChild(h('div', { class: 'msg' }, h('b', { style: 'color:' + m.color, text: m.name + ': ' }), m.text));
+    }
+    openChat() {
+      if (!this.app.mp) return;
+      this.chatOpen = true;
+      this.app.chatOpen = true;
+      const box = this.$('hud-chat'), input = box.querySelector('input');
+      box.hidden = false;
+      input.hidden = false;
+      input.value = '';
+      this.renderChat();
+      setTimeout(() => input.focus(), 0);
+    }
+    closeChat() {
+      this.chatOpen = false;
+      this.app.chatOpen = false;
+      const box = this.$('hud-chat'), input = box.querySelector('input');
+      input.hidden = true;
+      input.blur();
+      this.app.renderer.canvas.focus({ preventScroll: true });
+      this.renderChat();
     }
 
     build_help() {

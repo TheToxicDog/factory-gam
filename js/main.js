@@ -22,6 +22,7 @@
   app.renderer = new FG.Renderer(document.getElementById('world'));
   app.ui = new FG.UI(app);
   app.input = new FG.Input(app);
+  app.net = new FG.Net(app);
   window.addEventListener('resize', () => app.renderer.resize());
 
   // Every change a player makes to the world goes through here as a command. In single
@@ -48,7 +49,7 @@
 
   app.onWindowChange = function () {
     const w = app.ui.win;
-    app.paused = !!(w && (w.name === 'menu' || w.name === 'saves' || w.name === 'savecode' || w.name === 'newgame' || w.name === 'help' || w.name === 'victory'));
+    app.paused = !app.mp && !!(w && (w.name === 'menu' || w.name === 'saves' || w.name === 'savecode' || w.name === 'newgame' || w.name === 'help' || w.name === 'victory'));
   };
 
   // Keep the hotbar stocked with placeable items the player picks up.
@@ -66,18 +67,27 @@
   FG.on('inventory', autoHotbar);
   app.autoHotbar = autoHotbar;
 
-  app.startGame = function (g) {
+  app.startGame = function (g, opts) {
     if (app.game && app.game !== g) autosaveCurrent();
+    const mp = !!(opts && opts.mp);
+    if (!mp && app.net.live) app.net.leave();
+    app.mp = mp;
     app.game = g;
     app.demo = null;
     app.cursor = null;
     app.dir = 0;
-    app.hotbar = g.hotbar && g.hotbar.length === 10 ? g.hotbar.slice() : new Array(10).fill(null);
+    if (mp) {
+      // Your hotbar in a shared world is yours, kept per world in this browser.
+      let hb = null;
+      try { hb = JSON.parse(localStorage.getItem('cogworks-mp-hotbar-' + app.net.lobby.id) || 'null'); } catch (e) { hb = null; }
+      app.hotbar = Array.isArray(hb) && hb.length === 10 ? hb : new Array(10).fill(null);
+    } else app.hotbar = g.hotbar && g.hotbar.length === 10 ? g.hotbar.slice() : new Array(10).fill(null);
     g.hotbar = app.hotbar;
     app.titleShown = false;
     app.lastAutosave = g.tick;
     document.getElementById('title').hidden = true;
     document.getElementById('hud').hidden = false;
+    document.getElementById('hud-keys').innerHTML = '<kbd>E</kbd> inventory · <kbd>T</kbd> research · ' + (mp ? '<kbd>/</kbd> chat · ' : '') + '<kbd>H</kbd> controls';
     if (app.ui.win) app.ui.close();
     app.renderer.cam.x = g.player.x;
     app.renderer.cam.y = g.player.y;
@@ -91,8 +101,28 @@
     app.ui.setKeyboardHint(!document.hasFocus());
   };
 
-  // Keep the running game safe before replacing it.
+  // Multiplayer: the world was rebuilt from its save (someone joined, or ours drifted and
+  // reloaded). Swap it in and keep what the player was doing.
+  app.replaceGame = function (g) {
+    const old = app.game;
+    app.game = g;
+    g.hotbar = app.hotbar;
+    app.input.drag = null;
+    const w = app.ui.win;
+    if (w && (w.name === 'entity' || w.name === 'train')) {
+      const scroll = w.el.querySelector('.body') ? w.el.querySelector('.body').scrollTop : 0;
+      let arg = null;
+      if (w.name === 'entity' && w.arg) arg = g.ents.get(w.arg.id) || null;
+      if (w.name === 'train' && w.arg) arg = w.arg.car ? FG.trains.findCar(g, w.arg.car.id) : null;
+      if (arg) { app.ui.open(w.name, arg); const b = app.ui.win && app.ui.win.el.querySelector('.body'); if (b) b.scrollTop = scroll; }
+      else app.ui.close();
+    } else if (w && w.name === 'inventory' && app.ui.held) app.ui.dropHeld();
+    void old;
+  };
+
+  // Keep the running game safe before replacing it. (A shared world is the server's to keep.)
   function autosaveCurrent() {
+    if (app.mp) return null;
     if (app.game && !app.titleShown && app.game.tick > 60) return FG.save.store(app.game, 'auto').catch(() => {});
     return null;
   }
@@ -113,6 +143,8 @@
 
   app.showTitle = function () {
     const saving = autosaveCurrent();
+    if (app.net.live) app.net.leave();
+    app.mp = false;
     app.titleShown = true;
     app.game = null;
     document.getElementById('hud').hidden = true;
@@ -137,6 +169,7 @@
     } }));
     menu.appendChild(h('button', { class: 'btn' + (hasAuto ? '' : ' primary'), text: 'New game', onclick: () => app.ui.open('newgame') }));
     menu.appendChild(h('button', { class: 'btn', text: 'Demo factory', title: 'A ready-made base with steam power, miners, belts, smelting, science and a railway', onclick: () => app.startDemo() }));
+    menu.appendChild(h('button', { class: 'btn', text: 'Multiplayer', title: 'Host a world on the server or join someone else\'s', onclick: () => app.ui.open('multiplayer') }));
     if (hasAny) menu.appendChild(h('button', { class: 'btn', text: 'Load game', onclick: () => app.ui.open('saves', 'load') }));
     menu.appendChild(h('button', { class: 'btn', text: 'Import save code', onclick: () => app.ui.open('savecode') }));
     menu.appendChild(h('button', { class: 'btn', text: 'Controls', onclick: () => app.ui.open('help') }));
@@ -215,6 +248,20 @@
           R.cam.y = g.world.spawnY + Math.cos(t * 0.04) * 3;
           R.draw(g, { hover: null, build: null, altMode: false });
         }
+      } else if (app.game && app.mp) {
+        // Multiplayer: the server sets the pace; run our copy of the world up to its tick.
+        app.input.frame();
+        app.input.tick();
+        app.net.step(dt);
+        const g = app.game;
+        R.cam.x += (g.player.x - R.cam.x) * 0.25;
+        R.cam.y += (g.player.y - R.cam.y) * 0.25;
+        R.draw(g, app.view);
+        if (now - lastHud > 100) { lastHud = now; app.ui.updateHud(); }
+        if (now - (app.lastHotbarSave || 0) > 3000 && app.net.lobby) {
+          app.lastHotbarSave = now;
+          try { localStorage.setItem('cogworks-mp-hotbar-' + app.net.lobby.id, JSON.stringify(app.hotbar)); } catch (e) { /* private mode */ }
+        }
       } else if (app.game) {
         const g = app.game;
         app.input.frame();
@@ -245,7 +292,8 @@
 
   // Sound effects (only for the live game, never the title-screen demo).
   const live = () => app.game && !app.titleShown;
-  FG.on('sound', (name, x, y) => { if (live()) FG.sfx.play(name, x, y); });
+  // Other players' sounds only when they have a place in the world (you hear them nearby).
+  FG.on('sound', (name, x, y) => { if (live() && !(x === undefined && app.game.remoteCtx())) FG.sfx.play(name, x, y); });
   FG.on('placed', (e) => { if (live()) FG.sfx.play('place', e.x, e.y); });
   FG.on('research', (tid) => { if (tid && live()) FG.sfx.play('research'); });
   FG.on('objective', () => { if (live()) FG.sfx.play('objective'); });
@@ -253,7 +301,7 @@
 
   // Save before the tab closes (uncompressed is too slow to be safe; use the fast path).
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden && app.game && !app.titleShown) FG.save.store(app.game, 'auto').catch(() => {});
+    if (document.hidden && app.game && !app.titleShown && !app.mp) FG.save.store(app.game, 'auto').catch(() => {});
   });
 
   function boot(data) {
@@ -272,7 +320,7 @@
   // Preserve an in-progress game across live page updates when hosted as an artifact.
   const hot = window.claude && window.claude.hot;
   if (hot && typeof hot.snapshot === 'function') {
-    try { hot.snapshot(() => (app.game && !app.titleShown ? { save: FG.save.serialize(app.game) } : {})); } catch (e) { /* optional */ }
+    try { hot.snapshot(() => (app.game && !app.titleShown && !app.mp ? { save: FG.save.serialize(app.game) } : {})); } catch (e) { /* optional */ }
   }
   if (hot && typeof hot.ready === 'function') hot.ready(boot);
   else boot((hot && hot.data) || {});

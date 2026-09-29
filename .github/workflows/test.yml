@@ -13,4 +13,5 @@ jobs:
         with:
           node-version: 22
       - run: node tests/sim.test.js
+      - run: node tests/mp.test.js
       - run: node tools/build.mjs

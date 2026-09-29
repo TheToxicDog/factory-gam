@@ -10,9 +10,10 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  AWS_REGION: us-east-1
+  INSTANCE_ID: i-0cbdb215d5b8ab095
   BRANCH: claude/loving-thompson-7yjuky
   REPO_URL: https://github.com/TheToxicDog/factory-gam.git
-  APP_DIR: /opt/tuff-game
 
 jobs:
   deploy:
@@ -22,101 +23,61 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Run simulation tests
+      - name: Simulation tests
         run: node tests/sim.test.js
+      - name: Multiplayer server tests
+        run: node tests/mp.test.js
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-east-2
-
-      # Instance IDs are per-region, so find the (single) online SSM-managed instance in us-east-2.
-      - name: Find target instance
-        run: |
-          IDS=$(aws ssm describe-instance-information \
-            --filters Key=PingStatus,Values=Online \
-            --query 'InstanceInformationList[].InstanceId' --output text)
-          echo "Online SSM instances: $IDS"
-          if [ "$(echo $IDS | wc -w)" != "1" ]; then
-            echo "Expected exactly one online instance in us-east-2; set INSTANCE_ID explicitly."; exit 1
-          fi
-          echo "INSTANCE_ID=$IDS" >> "$GITHUB_ENV"
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: Show deploy target
         run: |
-          aws sts get-caller-identity --query '{Account:Account,Arn:Arn}' --output json
           aws ec2 describe-instances --instance-ids "$INSTANCE_ID" \
-            --query 'Reservations[].Instances[].{State:State.Name,AZ:Placement.AvailabilityZone,Type:InstanceType,PublicIp:PublicIpAddress,Name:Tags[?Key==`Name`]|[0].Value}' --output json || echo "ec2:DescribeInstances not permitted"
-          aws ssm describe-instance-information --query 'InstanceInformationList[].{Id:InstanceId,Ping:PingStatus,Name:ComputerName,Ip:IPAddress}' --output json || true
+            --query 'Reservations[].Instances[].{State:State.Name,AZ:Placement.AvailabilityZone,Type:InstanceType,PublicIp:PublicIpAddress,Name:Tags[?Key==`Name`]|[0].Value}' --output json
+          IP=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)
+          echo "PUBLIC_IP=$IP" >> "$GITHUB_ENV"
 
-      # Completely replaces whatever is on the instance with this branch. The game is static
-      # (no npm dependencies), so it is served by a tiny systemd unit, reusing the old unit's port.
+      # Replaces the app on the instance with this branch and restarts the game server
+      # (deploy/remote.sh). Hosted worlds are kept.
       - name: Deploy via SSM
         run: |
           set -e
-          cat > params.json <<JSON
-          {"commands": [
-            "set -e",
-            "export HOME=/root",
-            "exec 2>&1",
-            "PORT=\$(ss -ltnpH 2>/dev/null | grep -E 'tuff|node' | head -1 | sed -E 's/.*:([0-9]+) .*/\\\\1/')",
-            "PORT=\${PORT:-80}",
-            "rm -rf $APP_DIR.new",
-            "git clone --depth 1 --branch $BRANCH $REPO_URL $APP_DIR.new",
-            "systemctl stop tuff-game.service || true",
-            "rm -rf $APP_DIR",
-            "mv $APP_DIR.new $APP_DIR",
-            "id tuff >/dev/null 2>&1 || useradd --system --no-create-home tuff",
-            "chown -R tuff:tuff $APP_DIR",
-            "printf '[Unit]\\\\nDescription=Cogworks Frontier\\\\nAfter=network.target\\\\n\\\\n[Service]\\\\nUser=tuff\\\\nWorkingDirectory=$APP_DIR\\\\nExecStart=/usr/bin/python3 -m http.server '\$PORT' --directory $APP_DIR\\\\nRestart=always\\\\nAmbientCapabilities=CAP_NET_BIND_SERVICE\\\\n\\\\n[Install]\\\\nWantedBy=multi-user.target\\\\n' > /etc/systemd/system/tuff-game.service",
-            "rm -rf /etc/systemd/system/tuff-game.service.d",
-            "systemctl daemon-reload",
-            "systemctl reset-failed tuff-game.service || true",
-            "systemctl enable tuff-game.service",
-            "systemctl restart tuff-game.service",
-            "sleep 2",
-            "systemctl is-active tuff-game.service",
-            "curl -fsS -o /dev/null http://localhost:\$PORT/ && echo serving on \$PORT"
-          ]}
-          JSON
+          SCRIPT=$(base64 -w0 deploy/remote.sh)
+          jq -n --arg s "$SCRIPT" --arg b "$BRANCH" --arg r "$REPO_URL" \
+            '{commands: ["echo \($s) | base64 -d > /tmp/cogworks-deploy.sh", "bash /tmp/cogworks-deploy.sh \($b) \($r)"]}' > params.json
           COMMAND_ID=$(aws ssm send-command \
             --instance-ids "$INSTANCE_ID" \
             --document-name AWS-RunShellScript \
+            --timeout-seconds 600 \
             --parameters file://params.json \
             --query 'Command.CommandId' --output text)
           echo "Command ID: $COMMAND_ID"
-
-          aws ssm wait command-executed \
-            --command-id "$COMMAND_ID" --instance-id "$INSTANCE_ID" || true
-
-          aws ssm get-command-invocation \
-            --command-id "$COMMAND_ID" --instance-id "$INSTANCE_ID" \
+          for i in $(seq 1 60); do
+            STATUS=$(aws ssm get-command-invocation --command-id "$COMMAND_ID" --instance-id "$INSTANCE_ID" --query 'Status' --output text 2>/dev/null || echo Pending)
+            case "$STATUS" in Pending|InProgress|Delayed) sleep 5 ;; *) break ;; esac
+          done
+          aws ssm get-command-invocation --command-id "$COMMAND_ID" --instance-id "$INSTANCE_ID" \
             --query '{Status:Status,Out:StandardOutputContent,Err:StandardErrorContent}' --output json
-
-          STATUS=$(aws ssm get-command-invocation \
-            --command-id "$COMMAND_ID" --instance-id "$INSTANCE_ID" \
-            --query 'Status' --output text)
           if [ "$STATUS" != "Success" ]; then
             echo "Deploy failed with status: $STATUS"
             exit 1
           fi
 
+      - name: Check it from outside
+        run: |
+          for i in $(seq 1 10); do curl -fsS "http://$PUBLIC_IP/healthz" && break; sleep 2; done
+          curl -fsS "http://$PUBLIC_IP/api/lobbies"; echo
+          echo "Play at http://$PUBLIC_IP/"
+
       - name: Diagnose instance (on failure)
         if: failure()
         run: |
-          cat > diag.json <<'JSON'
-          {"commands": [
-            "exec 2>&1",
-            "export HOME=/root",
-            "whoami; git --version; which git python3 node; df -h /opt /tmp | head; free -m | head -3",
-            "ls -la /opt",
-            "systemctl status tuff-game.service --no-pager | head -15",
-            "curl -sS -m 10 -o /dev/null -w 'github http %{http_code}\\n' https://github.com/TheToxicDog/factory-gam || echo curl-failed",
-            "rm -rf /tmp/gt && GIT_TRACE=1 GIT_CURL_VERBOSE=0 git clone --depth 1 https://github.com/TheToxicDog/factory-gam.git /tmp/gt 2>&1 | tail -15; echo clone-rc=$?"
-          ]}
-          JSON
+          jq -n '{commands: ["exec 2>&1", "systemctl status tuff-game.service --no-pager | head -20", "journalctl -u tuff-game.service -n 60 --no-pager", "command -v node && node -v", "ls -la /opt/tuff-game /var/lib/cogworks | head -30"]}' > diag.json
           CID=$(aws ssm send-command --instance-ids "$INSTANCE_ID" --document-name AWS-RunShellScript \
             --parameters file://diag.json --query 'Command.CommandId' --output text)
           aws ssm wait command-executed --command-id "$CID" --instance-id "$INSTANCE_ID" || true

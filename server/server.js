@@ -40,7 +40,7 @@ fs.mkdirSync(LOBBY_DIR, { recursive: true });
 
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 const clean = (s, max) => String(s == null ? '' : s).replace(/[\u0000-\u001f\u007f<>]/g, '').trim().slice(0, max);
-const rid = (n) => crypto.randomBytes(n).toString('base64url').replace(/[-_]/g, '').slice(0, n);
+const rid = (n) => crypto.randomBytes(n).toString('hex').slice(0, n);
 
 // ------------------------------------------------------------------ passwords
 function hashPass(pass, salt) { return crypto.scryptSync(String(pass), salt, 32).toString('hex'); }

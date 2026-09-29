@@ -421,3 +421,38 @@ canvas:focus { outline: none; }
   color: var(--text); font-size: 14px; font-weight: 600; pointer-events: none;
 }
 #focus-hint[hidden] { display: none; }
+
+/* ---------------------------------------------------------- multiplayer */
+.label-like { color: var(--muted); }
+.swatches { display: flex; gap: 6px; flex-wrap: wrap; }
+.swatch { width: 24px; height: 24px; border-radius: 50%; border: 2px solid rgba(0, 0, 0, 0.5); cursor: pointer; padding: 0; box-shadow: 0 0 0 1px var(--line); }
+.swatch.on { box-shadow: 0 0 0 2px var(--text); }
+.mp-pane { min-width: min(620px, calc(100vw - 60px)); }
+.mp-profile { min-width: 0; }
+.mp-status { max-width: none; }
+.mp-list { min-width: 0; max-height: min(46vh, 420px); overflow: auto; }
+.mp-row { align-items: flex-start !important; }
+.mp-row.live { border-color: #4a6a3a; }
+.mp-row .btn { align-self: center; flex: none; }
+.mp-access { width: 22px; flex: none; text-align: center; font-size: 15px; line-height: 22px; color: var(--dim); }
+.mp-access.open { color: var(--good); font-size: 12px; }
+.mp-row .meta b { font-size: 16px; }
+.mp-host { color: var(--dim); }
+.mp-who { color: var(--muted); }
+.mp-who.on { color: var(--good); }
+.mp-bits { color: var(--dim); font-size: 12.5px; }
+.mp-empty .meta { color: var(--muted); }
+.mp-advanced summary { cursor: pointer; color: var(--dim); font-size: 13px; }
+.mp-advanced input { background: var(--well); border: 1px solid var(--line); color: var(--text); padding: 4px 8px; border-radius: 2px; font: inherit; }
+#hud-players { padding: 7px 10px; min-width: 184px; max-width: 240px; font-size: 13px; }
+#hud-players ul { list-style: none; margin: 5px 0 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+#hud-players li { display: flex; align-items: center; gap: 7px; color: var(--muted); }
+#hud-players li.me { color: var(--text); font-weight: 600; }
+#hud-players li i { width: 9px; height: 9px; border-radius: 50%; flex: none; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6); }
+#hud-players li .n { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#hud-players li .ping { color: var(--dim); font-size: 11px; }
+#hud-chat { position: absolute; left: 12px; bottom: 96px; width: min(420px, calc(100vw - 24px)); display: flex; flex-direction: column; gap: 6px; }
+#hud-chat .log { display: flex; flex-direction: column; gap: 3px; }
+#hud-chat .msg { align-self: flex-start; max-width: 100%; padding: 3px 9px; font-size: 14px; background: rgba(20, 18, 15, 0.82); border-radius: var(--radius); overflow-wrap: anywhere; user-select: text; }
+#hud-chat input { background: rgba(20, 18, 15, 0.95); border: 1px solid var(--amber-deep); color: var(--text); padding: 7px 10px; border-radius: var(--radius); font: inherit; font-size: 14.5px; }
+#hud-chat input:focus-visible { outline: 2px solid var(--amber); outline-offset: 1px; }

@@ -23,6 +23,21 @@ A keyboard and mouse are required.
 
 It's a normal game from there: explore it, open every machine, or keep building.
 
+## Multiplayer
+
+The title screen's **Multiplayer** button lists the worlds hosted on the server the game was loaded from. Pick a name and colour, then:
+
+- **Host a world:** start a new map or put up one of your saves. Make it **public**, or protect it with a **password** that friends type to join. The world runs on the server, so it keeps going and stays listed when you leave. You (and everyone who played) get your own character back when you return. As host, you can close it for everyone from the Esc menu.
+- **Join:** anyone on the server sees the list, with who is playing, the map and how long it has run. Password-protected worlds ask for the password.
+
+Everyone builds in the same world and shares research. You see the others in their colours, with name tags and dots on the map, and a player list with pings at the top right. Press **/** to chat.
+
+**How it stays in sync:** the server (`server/`) runs every hosted world itself at 60 ticks a second. Each player's action is a small command (`js/commands.js`) that the server stamps with the tick it happens on and sends to everyone, so every browser runs an identical copy of the world (lockstep). Every two seconds the server's checksum of the world is compared with each copy. A copy that has drifted reloads from the server's world, without anyone else noticing. When someone joins, everyone rebuilds the world from the same save at the same tick, so the newcomer matches exactly.
+
+**Running a server:** `node server/server.js` (Node 18 or newer, no packages to install) serves the game and hosts lobbies on `PORT` (default 8080). Worlds are kept in `DATA_DIR` (default `./data`) and survive restarts. `.github/workflows/deploy.yml` deploys it to an AWS instance through SSM (`deploy/remote.sh`) on port 80.
+
+Tests: `node tests/mp.test.js` starts a server and checks lobbies, passwords, commands, checksums, drift recovery, rejoining and restarts with headless clients. `node tests/mp-browser.cjs http://localhost:8080/` plays it with four Chromium players.
+
 ## Controls
 
 | Action | Input |
@@ -52,6 +67,7 @@ It's a normal game from there: explore it, open every machine, or keep building.
 | Throw a grenade | G |
 | Detail overlay / pollution overlay | Alt / F |
 | Pause menu (save, load, new game) | Esc |
+| Chat (multiplayer) | / |
 
 ## How a game unfolds
 

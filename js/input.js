@@ -99,6 +99,7 @@
         case 'KeyM': ui.toggle('map'); break;
         case 'KeyH': case 'F1': e.preventDefault(); ui.toggle('help'); break;
         case 'KeyF': app.view.showPollution = !app.view.showPollution; ui.toast(app.view.showPollution ? 'Pollution overlay on' : 'Pollution overlay off'); break;
+        case 'Slash': if (app.mp) { e.preventDefault(); ui.openChat(); } break;
         case 'KeyQ': this.pipette(); break;
         case 'KeyR': this.rotate(e.shiftKey); break;
         case 'KeyX': this.mode = 'decon'; ui.toast('Drag over buildings to pick them up', 'info'); break;
@@ -591,6 +592,7 @@
       // Let go of an item once the last one is used (drones can still plan ghosts of it).
       if (c && c.item && !c.ghost && !g.player.inv.count(c.item) && !(g.bonus.drones && D.items[c.item].place)) { app.cursor = c = null; }
       view.held = c && c.item ? c.item : g.enemies.playerGun();
+      view.aim = { aimX: wx, aimY: wy };
       if (m.over && c && c.bp && !view.select) {
         const [ax, ay] = this.blueprintAnchor(c.bp);
         view.build = {

@@ -704,24 +704,38 @@
     }
 
     drawPlayer(g, view) {
-      const p = g.player;
-      if (p.dead) return;
+      const me = g.player;
+      const many = g.players.size > 1;
+      for (const p of g.players.values()) {
+        if (p.away || p.dead) continue;
+        if (p === me) continue;
+        this.drawOnePlayer(g, p, null, many);
+      }
+      if (me && !me.dead && !me.away) this.drawOnePlayer(g, me, view, false);
+    }
+    // One player: a round body in their colour facing where they aim, hands out front with
+    // whatever they hold. `view` is set for the local player (aim follows the mouse directly).
+    drawOnePlayer(g, p, view, tag) {
       const ctx = this.ctx, T = this.T;
       const [sx, sy] = this.toScreen(p.x, p.y);
+      if (sx < -T * 3 || sy < -T * 3 || sx > this.W + T * 3 || sy > this.H + T * 3) return;
       const bob = Math.sin(p.walk * 0.35) * T * 0.03;
       ctx.fillStyle = 'rgba(0,0,0,0.35)';
       ctx.beginPath(); ctx.ellipse(sx + T * 0.06, sy + T * 0.3, T * 0.34, T * 0.16, 0, 0, Math.PI * 2); ctx.fill();
-      // Face the mouse.
-      const ang = Math.atan2(g.input.aimY - p.y, g.input.aimX - p.x);
+      // Face the mouse (other players: where they last aimed).
+      const inp = view && view.aim ? view.aim : g.inputs.get(p.id) || g.input;
+      const ang = Math.atan2(inp.aimY - p.y, inp.aimX - p.x);
       const lw = Math.max(1, T * 0.03), r = T * 0.3;
+      const color = p.color || '#e07a2a';
       ctx.save(); ctx.translate(sx, sy - T * 0.25 + bob); ctx.rotate(ang);
       // body: a plain circle, with a visor marking the front
-      circle(ctx, 0, 0, r, '#e07a2a', '#6a3410', lw);
+      circle(ctx, 0, 0, r, color, S.shade(color, -0.55), lw);
       ctx.fillStyle = '#2a4a6a';
       S.rr(ctx, r * 0.35, -r * 0.4, r * 0.4, r * 0.8, r * 0.15); ctx.fill();
       // hands reach forward; the held item sits between them
       const reach = r + T * 0.16, hr = T * 0.09;
-      const held = view && view.held ? FG.icons.get(view.held) : null;
+      const heldId = view ? view.held : p.inv.count('smg') ? 'smg' : p.inv.count('pistol') ? 'pistol' : null;
+      const held = heldId ? FG.icons.get(heldId) : null;
       if (held) {
         const s = T * 0.5;
         ctx.save(); ctx.translate(reach + s * 0.2, 0);
@@ -731,10 +745,26 @@
       circle(ctx, reach, -T * 0.16, hr, '#e8c9a0', '#6a4a2a', lw);
       circle(ctx, reach, T * 0.16, hr, '#e8c9a0', '#6a4a2a', lw);
       ctx.restore();
+      let top = sy - T * 0.8;
       if (p.hp < p.maxHp) {
         const f = p.hp / p.maxHp;
-        ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(sx - T * 0.35, sy - T * 0.8, T * 0.7, T * 0.08);
-        ctx.fillStyle = f > 0.5 ? '#7ac05a' : '#e0553f'; ctx.fillRect(sx - T * 0.35, sy - T * 0.8, T * 0.7 * f, T * 0.08);
+        ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(sx - T * 0.35, top, T * 0.7, T * 0.08);
+        ctx.fillStyle = f > 0.5 ? '#7ac05a' : '#e0553f'; ctx.fillRect(sx - T * 0.35, top, T * 0.7 * f, T * 0.08);
+      }
+      if (tag) {
+        // Name tag
+        const fs = Math.max(11, Math.min(15, T * 0.34));
+        ctx.font = '600 ' + fs + 'px "Barlow Semi Condensed", sans-serif';
+        const tw = ctx.measureText(p.name).width;
+        top -= fs * 0.35;
+        ctx.fillStyle = 'rgba(16,14,12,0.78)';
+        S.rr(ctx, sx - tw / 2 - 6, top - fs - 3, tw + 12, fs + 6, 3); ctx.fill();
+        ctx.fillStyle = color;
+        ctx.fillRect(sx - tw / 2 - 6, top + 1, tw + 12, 2);
+        ctx.fillStyle = '#efe6d6';
+        ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+        ctx.fillText(p.name, sx, top - 3);
+        ctx.textAlign = 'start';
       }
     }
 
@@ -821,7 +851,7 @@
         dc.fillStyle = gr;
         dc.beginPath(); dc.arc(x, y, r * T, 0, Math.PI * 2); dc.fill();
       };
-      if (!g.player.dead) hole(g.player.x, g.player.y, 9, 0.9);
+      for (const p of g.players.values()) if (!p.dead && !p.away) hole(p.x, p.y, 9, 0.9);
       for (const tr of g.rail.trains) tr.cars.forEach((c, i) => {
         if (c.type !== 'loco') return;
         const p = FG.trains.carPose(tr, i);
@@ -1173,10 +1203,16 @@
       const [sx, sy] = toM(p.x, p.y);
       ctx.fillRect(sx - Math.max(1.5, scale), sy - Math.max(1.5, scale), Math.max(3, scale * 2), Math.max(3, scale * 2));
     }
-    // Player
+    // Players (you on top, in amber)
+    ctx.strokeStyle = '#1a1714';
+    for (const p of g.players.values()) {
+      if (p.away || p === g.player) continue;
+      const [qx, qy] = toM(p.x, p.y);
+      ctx.fillStyle = p.color || '#e07a2a';
+      ctx.beginPath(); ctx.arc(qx, qy, Math.max(2.5, scale * 1.2), 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    }
     const [px, py] = toM(g.player.x, g.player.y);
     ctx.fillStyle = '#f0a830';
-    ctx.strokeStyle = '#1a1714';
     ctx.beginPath(); ctx.arc(px, py, Math.max(3, scale * 1.5), 0, Math.PI * 2); ctx.fill(); ctx.stroke();
     if (opts.viewRect) {
       const [ax, ay] = toM(opts.viewRect[0], opts.viewRect[1]);
