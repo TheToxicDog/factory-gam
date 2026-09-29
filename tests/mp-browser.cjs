@@ -5,9 +5,9 @@ const { chromium } = require('playwright');
 (async () => {
   const url = process.argv[2] || 'http://localhost:8124/';
   const out = process.argv[3] || '.';
-  // A remote server is reached through the environment's proxy, if it has one.
-  const proxy = !/localhost|127\.0\.0\.1/.test(url) && (process.env.HTTPS_PROXY || process.env.HTTP_PROXY);
-  const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', proxy: proxy ? { server: proxy } : undefined, args: ['--ignore-certificate-errors'] });
+  // PW_PROXY: optional proxy for the browser (plain-HTTP capable) to reach a remote server.
+  const proxy = process.env.PW_PROXY || null;
+  const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', proxy: proxy ? { server: proxy } : undefined, args: proxy ? [] : ['--no-proxy-server'] });
   const errors = [];
   const check = (name, cond, info) => { console.log((cond ? '  ok   ' : '  FAIL ') + name + (info !== undefined ? '  ' + info : '')); if (!cond) errors.push(name); };
   async function player(name) {
@@ -147,6 +147,9 @@ const { chromium } = require('playwright');
   await A.evaluate(() => { FG.app.net.hold = false; });
   await B.evaluate(() => { FG.app.net.hold = false; });
 
+  // Clean up: the hosts close the worlds this test made.
+  for (const p of [A, C]) await p.evaluate(() => FG.app.net.closeLobby());
+  await A.waitForTimeout(500);
   console.log(errors.length ? 'ERRORS:\n' + errors.join('\n') : 'no page errors');
   await browser.close();
   process.exit(errors.length ? 1 : 0);
