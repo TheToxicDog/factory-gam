@@ -1,0 +1,79 @@
+name: Deploy
+
+on:
+  push:
+    branches: [claude/loving-thompson-7yjuky]
+  workflow_dispatch: {}
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+env:
+  INSTANCE_ID: i-0cbdb215d5b8ab095
+  BRANCH: claude/loving-thompson-7yjuky
+  REPO_URL: https://github.com/TheToxicDog/factory-gam.git
+  APP_DIR: /opt/tuff-game
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Run simulation tests
+        run: node tests/sim.test.js
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      # Completely replaces whatever is on the instance with this branch. The game is static
+      # (no npm dependencies), so it is served by a tiny systemd unit, reusing the old unit's port.
+      - name: Deploy via SSM
+        run: |
+          set -e
+          cat > params.json <<JSON
+          {"commands": [
+            "set -e",
+            "PORT=\$(ss -ltnpH 2>/dev/null | grep -E 'tuff|node' | head -1 | sed -E 's/.*:([0-9]+) .*/\\\\1/')",
+            "PORT=\${PORT:-80}",
+            "systemctl stop tuff-game.service || true",
+            "rm -rf $APP_DIR",
+            "git clone --depth 1 --branch $BRANCH $REPO_URL $APP_DIR",
+            "id tuff >/dev/null 2>&1 || useradd --system --no-create-home tuff",
+            "chown -R tuff:tuff $APP_DIR",
+            "printf '[Unit]\\\\nDescription=Cogworks Frontier\\\\nAfter=network.target\\\\n\\\\n[Service]\\\\nUser=tuff\\\\nWorkingDirectory=$APP_DIR\\\\nExecStart=/usr/bin/python3 -m http.server '\$PORT' --directory $APP_DIR\\\\nRestart=always\\\\nAmbientCapabilities=CAP_NET_BIND_SERVICE\\\\n\\\\n[Install]\\\\nWantedBy=multi-user.target\\\\n' > /etc/systemd/system/tuff-game.service",
+            "systemctl daemon-reload",
+            "systemctl enable tuff-game.service",
+            "systemctl restart tuff-game.service",
+            "sleep 2",
+            "systemctl is-active tuff-game.service",
+            "curl -fsS -o /dev/null http://localhost:\$PORT/ && echo serving on \$PORT"
+          ]}
+          JSON
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name AWS-RunShellScript \
+            --parameters file://params.json \
+            --query 'Command.CommandId' --output text)
+          echo "Command ID: $COMMAND_ID"
+
+          aws ssm wait command-executed \
+            --command-id "$COMMAND_ID" --instance-id "$INSTANCE_ID" || true
+
+          aws ssm get-command-invocation \
+            --command-id "$COMMAND_ID" --instance-id "$INSTANCE_ID" --output text
+
+          STATUS=$(aws ssm get-command-invocation \
+            --command-id "$COMMAND_ID" --instance-id "$INSTANCE_ID" \
+            --query 'Status' --output text)
+          if [ "$STATUS" != "Success" ]; then
+            echo "Deploy failed with status: $STATUS"
+            exit 1
+          fi
