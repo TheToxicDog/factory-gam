@@ -33,6 +33,13 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-1
 
+      - name: Show deploy target
+        run: |
+          aws sts get-caller-identity --query '{Account:Account,Arn:Arn}' --output json
+          aws ec2 describe-instances --region us-east-1 --instance-ids "$INSTANCE_ID" \
+            --query 'Reservations[].Instances[].{State:State.Name,AZ:Placement.AvailabilityZone,Type:InstanceType,PublicIp:PublicIpAddress,Name:Tags[?Key==`Name`]|[0].Value}' --output json || echo "ec2:DescribeInstances not permitted"
+          aws ssm describe-instance-information --query 'InstanceInformationList[].{Id:InstanceId,Ping:PingStatus,Name:ComputerName,Ip:IPAddress}' --output json || true
+
       # Completely replaces whatever is on the instance with this branch. The game is static
       # (no npm dependencies), so it is served by a tiny systemd unit, reusing the old unit's port.
       - name: Deploy via SSM
