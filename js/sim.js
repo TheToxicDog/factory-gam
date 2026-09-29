@@ -772,9 +772,9 @@
   }
   function hobj(h, o, depth) {
     if (o === null || typeof o !== 'object') return hv(h, o);
-    if (depth > 2) return h;
+    if (depth > 4) return h;
     if (Array.isArray(o)) { for (const x of o) h = hobj(h, x, depth + 1); return h; }
-    if (o instanceof FG.Inventory) return hobj(h, o.slots, depth + 1);
+    if (o instanceof FG.Inventory) return hobj(h, o.slots, depth);
     if (o instanceof Map || o instanceof Set || ArrayBuffer.isView(o)) return h;
     for (const k in o) {
       if (HASH_SKIP.has(k) || k.charCodeAt(0) === 95) continue;
