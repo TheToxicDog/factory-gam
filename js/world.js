@@ -13,6 +13,8 @@
   FG.RES_ITEM = RES_ITEM;
   FG.RES_NAME = RES_NAME;
 
+  const GEN_CACHE = new Map();
+
   class World {
     constructor(seed, size, opts) {
       opts = opts || {};
@@ -34,7 +36,19 @@
       this.spawnX = size >> 1;
       this.spawnY = size >> 1;
       this.nestSpots = [];
-      this.generate(opts);
+      // Generating terrain is slow, and multiplayer rebuilds worlds from saves, so keep the
+      // freshly generated state of recent worlds to copy from.
+      const key = this.seed + ':' + size + ':' + this.richness;
+      const cached = GEN_CACHE.get(key);
+      if (cached) {
+        for (const k in cached) { const v = cached[k]; this[k] = ArrayBuffer.isView(v) ? v.slice() : Array.isArray(v) ? JSON.parse(JSON.stringify(v)) : v; }
+      } else {
+        this.generate(opts);
+        const snap = {};
+        for (const k of Object.keys(this)) { const v = this[k]; snap[k] = ArrayBuffer.isView(v) ? v.slice() : Array.isArray(v) ? JSON.parse(JSON.stringify(v)) : v; }
+        GEN_CACHE.set(key, snap);
+        while (GEN_CACHE.size > 4) GEN_CACHE.delete(GEN_CACHE.keys().next().value);
+      }
       this.modified = new Set(); // tiles whose resource changed since generation (for saves)
     }
 

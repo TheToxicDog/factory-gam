@@ -60,7 +60,7 @@
       for (let yy = y; yy < y + 2; yy++) for (let xx = x; xx < x + 2; xx++) {
         if (!w.inBounds(xx, yy) || w.isWater(xx, yy) || this.nestTiles.has(yy * w.W + xx)) return null;
       }
-      const n = { id: this.nextId++, x, y, hp: D.NEST_HP, budget: 0, pending: [], pendingSince: 0, cd: 0, anim: Math.random() * 100 };
+      const n = { id: this.nextId++, x, y, hp: D.NEST_HP, budget: 0, pending: [], pendingSince: 0, cd: 0, anim: this.g.rand() * 100 };
       this.nests.push(n);
       for (let yy = y; yy < y + 2; yy++) for (let xx = x; xx < x + 2; xx++) {
         const i = yy * w.W + xx;
@@ -184,7 +184,7 @@
       if (this.mode === 'normal' && g.tick >= this.expandAt) this.expand();
       this.updateUnits();
       this.updateTurrets();
-      this.updatePlayerCombat();
+      this.g.eachPlayer(() => this.updatePlayerCombat());
       this.updateShots();
       for (const n of this.nests) if (n.cd > 0) n.cd--;
     }
@@ -198,7 +198,7 @@
         ['colossus', e < 0.85 ? 0 : (e - 0.85) * 5],
       ];
       const tot = w.reduce((s, x) => s + x[1], 0);
-      let r = Math.random() * tot;
+      let r = this.g.rand() * tot;
       for (const [id, v] of w) { if ((r -= v) <= 0) return id; }
       return 'crawler';
     }
@@ -257,24 +257,24 @@
       const u = D.enemies[type];
       const unit = {
         id: this.nextId++, type, x, y, hp: u.hp, cd: 0, pi: 0, group,
-        target: targetId || null, targetPlayer: false, angle: 0, anim: Math.random() * 10, idle: 0, home: [x, y],
-        ox: (Math.random() - 0.5) * 2.5, oy: (Math.random() - 0.5) * 2.5,
+        target: targetId || null, targetPlayer: false, angle: 0, anim: this.g.rand() * 10, idle: 0, home: [x, y],
+        ox: (this.g.rand() - 0.5) * 2.5, oy: (this.g.rand() - 0.5) * 2.5,
       };
       this.units.push(unit);
       return unit;
     }
 
     expand() {
-      this.expandAt = this.g.tick + (6 + Math.random() * 8) * 3600;
+      this.expandAt = this.g.tick + (6 + this.g.rand() * 8) * 3600;
       if (this.evo < 0.05 || !this.nests.length || this.nests.length > 420) return;
-      const src = this.nests[Math.floor(Math.random() * this.nests.length)];
+      const src = this.nests[Math.floor(this.g.rand() * this.nests.length)];
       for (let k = 0; k < 12; k++) {
-        const a = Math.random() * Math.PI * 2, d = 10 + Math.random() * 14;
+        const a = this.g.rand() * Math.PI * 2, d = 10 + this.g.rand() * 14;
         const x = Math.round(src.x + Math.cos(a) * d), y = Math.round(src.y + Math.sin(a) * d);
         if (!this.g.world.inBounds(x, y)) continue;
         let near = false;
         for (const e of this.g.ents.values()) if (FG.dist2(e.x, e.y, x, y) < 26 * 26) { near = true; break; }
-        if (near || FG.dist2(x, y, this.g.player.x, this.g.player.y) < 30 * 30) continue;
+        if (near || this.g.nearestPlayer(x, y, 30 * 30)) continue;
         if (FG.canPlace(this.g, 'stone_wall', x, y, 0, { noReplace: true, ignorePlayer: true }).ok &&
             FG.canPlace(this.g, 'stone_wall', x + 1, y + 1, 0, { noReplace: true, ignorePlayer: true }).ok && this.addNest(x, y)) return;
       }
@@ -302,9 +302,9 @@
       n.hp -= Math.max(1, dmg - 2);
       if (n.cd <= 0 && this.units.length < 300) {
         n.cd = 180;
-        const k = 2 + Math.floor(Math.random() * 3);
+        const k = 2 + Math.floor(this.g.rand() * 3);
         for (let i = 0; i < k; i++) {
-          const u = this.spawnUnit(this.pickUnitType(), n.x + 1 + (Math.random() - 0.5) * 2, n.y + 1 + (Math.random() - 0.5) * 2, null, source && source.id ? source.id : null);
+          const u = this.spawnUnit(this.pickUnitType(), n.x + 1 + (this.g.rand() - 0.5) * 2, n.y + 1 + (this.g.rand() - 0.5) * 2, null, source && source.id ? source.id : null);
           if (source === 'player') u.targetPlayer = true;
         }
       }
@@ -319,7 +319,7 @@
     }
 
     updateUnits() {
-      const g = this.g, p = g.player;
+      const g = this.g;
       for (let i = this.units.length - 1; i >= 0; i--) {
         const u = this.units[i];
         const def = D.enemies[u.type];
@@ -328,8 +328,8 @@
         u.anim += def.speed * 3;
         // Pick who to fight.
         let tx = null, ty = null, tEnt = null, tPlayer = false;
-        const pd = FG.dist2(u.x, u.y, p.x, p.y);
-        if (!p.dead && (pd < 64 || (u.targetPlayer && pd < 40 * 40))) { tPlayer = true; tx = p.x; ty = p.y; }
+        const p = g.nearestPlayer(u.x, u.y, u.targetPlayer ? 40 * 40 : 64);
+        if (p) { tPlayer = true; tx = p.x; ty = p.y; }
         else {
           u.targetPlayer = false;
           if (u.target) {
@@ -361,7 +361,7 @@
           u.angle = Math.atan2(ty - u.y, tx - u.x);
           if (u.cd <= 0) {
             u.cd = def.cooldown;
-            if (tPlayer) { p.hp -= def.dmg; p.lastHit = g.tick; if (p.hp <= 0) this.playerDied(); }
+            if (tPlayer) { p.hp -= def.dmg; p.lastHit = g.tick; if (p.hp <= 0) this.playerDied(p); }
             else FG.damageEntity(g, tEnt, def.dmg);
           }
           continue;
@@ -393,12 +393,12 @@
       }
     }
 
-    playerDied() {
-      const p = this.g.player;
+    playerDied(p) {
+      p = p || this.g.player;
       p.hp = 0;
       p.dead = 180;
       this.g.effects.push({ type: 'boom', x: p.x, y: p.y, r: 1, t: 0, life: 30 });
-      this.g.msg('You were overwhelmed. Rebuilding at the landing site...', 'bad');
+      this.g.asPlayer(p.id, () => this.g.msg('You were overwhelmed. Rebuilding at the landing site...', 'bad'));
     }
 
     // Nearest hostile within range of (x, y). Returns {unit} or {nest}.

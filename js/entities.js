@@ -283,9 +283,11 @@
       }
     }
     if (g.enemies && g.enemies.nestBlocks(x, y, w, h)) return { ok: false, reason: 'Enemy nest in the way' };
-    if (pr.solid && g.player && !opts.ignorePlayer) {
-      const p = g.player;
-      if (p.x + 0.3 > x && p.x - 0.3 < x + w && p.y + 0.3 > y && p.y - 0.3 < y + h) return { ok: false, reason: 'You are standing there' };
+    if (pr.solid && g.players && !opts.ignorePlayer) {
+      for (const p of g.players.values()) {
+        if (p.away || p.vehicle) continue;
+        if (p.x + 0.3 > x && p.x - 0.3 < x + w && p.y + 0.3 > y && p.y - 0.3 < y + h) return { ok: false, reason: p === g.player ? 'You are standing there' : p.name + ' is standing there' };
+      }
     }
     if (pr.kind === 'drill') {
       const area = FG.drillArea(pr, x, y, w, h);

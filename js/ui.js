@@ -278,7 +278,7 @@
         this.hotbarEls.push(el);
       }
       this.$('hud-objective').addEventListener('click', (ev) => {
-        if (ev.target.classList.contains('skip')) { this.g.objectives.skip(); this.updateObjective(true); }
+        if (ev.target.classList.contains('skip')) { this.app.act({ t: 'objSkip' }); this.updateObjective(true); }
         else this.$('hud-objective').classList.toggle('collapsed');
       });
       FG.on('objectives', () => { if (this.app.game && !this.app.titleShown) this.updateObjective(true); });
@@ -367,7 +367,7 @@
         qe.innerHTML = '';
         q.slice(0, 14).forEach((x, i) => {
           const r = D.recipes[x.rid];
-          const el = slotEl(r.main, x.n, { onDown: () => this.g.cancelCraft(i) });
+          const el = slotEl(r.main, x.n, { onDown: () => this.app.act({ t: 'uncraft', i }) });
           el.dataset.text = 'Crafting ' + r.name + ' × ' + x.n + ' (click to cancel)';
           delete el.dataset.item;
           if (i === 0) el.appendChild(h('div', { class: 'prog', style: 'width:' + p.craftProg * 100 + '%' }));
@@ -623,24 +623,18 @@
       H.n = Math.min(H.n, src.n);
       if (j === H.i) { this.dropHeld(); return; }
       const dst = inv.slots[j];
+      // Work out locally what the move will do (the command re-checks it) to update the hand.
       let k = 0;
-      if (!dst) {
-        k = Math.min(want, H.n);
-        inv.slots[j] = { id: H.id, n: k };
-      } else if (dst.id === H.id) {
+      if (!dst) k = Math.min(want, H.n);
+      else if (dst.id === H.id) {
         k = Math.min(want, H.n, D.items[H.id].stack - dst.n);
         if (!k) { this.toast('That stack is full', 'warn'); return; }
-        dst.n += k;
-      } else if (H.n === src.n) {
-        inv.slots[j] = src; inv.slots[H.i] = dst;
-        this.dropHeld();
-        FG.emit('inventory');
-        return;
-      } else { this.toast('Put it in an empty slot or on the same item', 'warn'); return; }
-      src.n -= k; H.n -= k;
-      if (src.n <= 0) inv.slots[H.i] = null;
+      } else if (H.n === src.n) k = H.n;
+      else { this.toast('Put it in an empty slot or on the same item', 'warn'); return; }
+      this.app.act({ t: 'move', i: H.i, id: H.id, n: H.n, j, want });
+      if (dst && dst.id !== H.id) { this.dropHeld(); return; }
+      H.n -= k;
       if (H.n <= 0) this.dropHeld(); else this.placeHeldEl();
-      FG.emit('inventory');
     }
     // Let go of a split stack: it was never taken out of its slot, so nothing is lost.
     dropHeld() {
@@ -662,7 +656,7 @@
       const g = this.g, app = this.app;
       const w = this.frame('inventory', 'Inventory');
       const inv = this.invGrid((i, s) => { app.setCursor(s.id); this.close(); }, { split: true });
-      const sortBtn = h('button', { class: 'btn small', text: 'Sort', onclick: () => { g.player.inv.sort(); inv.update(); } });
+      const sortBtn = h('button', { class: 'btn small', text: 'Sort', onclick: () => { app.act({ t: 'sort' }); inv.update(); } });
       const left = h('div', { class: 'pane' }, h('div', { class: 'pane-head' }, h('h3', { text: 'Your inventory' }), sortBtn), inv.el,
         h('div', { class: 'hint', text: 'Click an item to hold it: click the world to build, click a machine to fill it, or press Z over a machine to put in one. Right-click a stack to split off half (shift+right-click takes it all), then click a slot to put it down; right-click puts down one at a time.' }));
       const groups = [['logistics', 'Logistics', 'belt'], ['production', 'Production', 'assembler_1'], ['intermediate', 'Intermediates', 'circuit'], ['combat', 'Combat', 'gun_turret']];
@@ -695,11 +689,7 @@
           const el = slotEl(r.main, undefined, {
             tip: false,
             onDown: (ev) => {
-              if (!g.canHandcraft(r.id)) { this.toast(r.cat === 'advanced' ? r.name + ' can only be made in an assembler' : 'Cannot hand-craft ' + r.name, 'warn'); return; }
-              const n = ev.shiftKey ? g.craftableCount(r.id) : ev.button === 2 ? 5 : 1;
-              let k = n;
-              while (k > 0 && !g.queueCraft(r.id, k)) k = ev.shiftKey ? 0 : k - 1;
-              if (!k) this.toast('Missing ingredients for ' + r.name, 'warn');
+              app.act({ t: 'craft', r: r.id, n: ev.button === 2 ? 5 : 1, all: ev.shiftKey });
               update();
             },
           });
@@ -744,21 +734,14 @@
       const put = function () { add(machine, Array.prototype.slice.call(arguments)); };
       const updaters = [];
       const upd = (fn) => updaters.push(fn);
-      const give = (list) => { g.giveOrDrop(list); };
-      const takeToPlayer = (id, n) => {
-        const k = Math.min(n, g.player.inv.space(id));
-        if (k <= 0) { this.toast('Inventory full', 'warn'); return 0; }
-        g.player.inv.add(id, k);
-        return k;
-      };
+      const take = (slot, extra) => app.act(Object.assign({ t: 'take', e: ent.id, s: slot }, extra || {}));
 
       // Module slots
       const moduleRow = () => {
         if (!ent.modules) return null;
         const els = ent.modules.map((m, i) => slotEl(m, undefined, {
           onDown: () => {
-            if (!ent.modules[i]) return;
-            if (takeToPlayer(ent.modules[i], 1)) { ent.modules[i] = null; g.markDirty('fx'); }
+            if (ent.modules[i]) take('mod', { i });
           },
         }));
         upd(() => ent.modules.forEach((m, i) => setSlot(els[i], m)));
@@ -766,7 +749,7 @@
       };
 
       const fuelSlot = () => {
-        const el = slotEl(null, undefined, { onDown: () => { if (ent.fuel) { const k = takeToPlayer(ent.fuel.id, ent.fuel.n); ent.fuel.n -= k; if (!ent.fuel.n) ent.fuel = null; } } });
+        const el = slotEl(null, undefined, { onDown: () => { if (ent.fuel) take('fuel'); } });
         upd(() => setSlot(el, ent.fuel && ent.fuel.id, ent.fuel ? ent.fuel.n : undefined));
         el.dataset.text = 'Fuel: coal, wood or solid fuel';
         return h('div', { class: 'group' }, h('div', { class: 'label', text: 'Fuel' }), el);
@@ -807,10 +790,7 @@
           const els = ent.inv.slots.map((s, i) => {
             const el = slotEl(null, undefined, {
               onDown: (ev) => {
-                const s2 = ent.inv.slots[i];
-                if (!s2) return;
-                if (ev.shiftKey) { const n = ent.inv.count(s2.id); const k = takeToPlayer(s2.id, n); ent.inv.remove(s2.id, k); }
-                else { const k = takeToPlayer(s2.id, s2.n); s2.n -= k; if (!s2.n) ent.inv.slots[i] = null; }
+                if (ent.inv.slots[i]) take('chest', { i, all: ev.shiftKey });
               },
             });
             grid.appendChild(el);
@@ -821,8 +801,8 @@
           break;
         }
         case 'furnace': {
-          const inEl = slotEl(null, undefined, { onDown: () => { if (ent.inp) { const k = takeToPlayer(ent.inp.id, ent.inp.n); ent.inp.n -= k; if (!ent.inp.n) ent.inp = null; } } });
-          const outEl = slotEl(null, undefined, { onDown: () => { if (ent.out) { const k = takeToPlayer(ent.out.id, ent.out.n); ent.out.n -= k; if (!ent.out.n) ent.out = null; } } });
+          const inEl = slotEl(null, undefined, { onDown: () => { if (ent.inp) take('inp1'); } });
+          const outEl = slotEl(null, undefined, { onDown: () => { if (ent.out) take('out1'); } });
           upd(() => { setSlot(inEl, ent.inp && ent.inp.id, ent.inp ? ent.inp.n : undefined); setSlot(outEl, ent.out && ent.out.id, ent.out ? ent.out.n : undefined); });
           put(h('div', { class: 'rowx' },
             pr.burner ? fuelSlot() : null,
@@ -853,12 +833,12 @@
             const r = ent.recipe && D.recipes[ent.recipe];
             if (!r) return;
             const inEls = Object.keys(r.ing).map((id) => {
-              const el = slotEl(id, 0, { onDown: () => { const n = ent.inp[id] || 0; if (n) { const k = takeToPlayer(id, n); ent.inp[id] -= k; if (!ent.inp[id]) delete ent.inp[id]; } } });
+              const el = slotEl(id, 0, { onDown: () => { if (ent.inp[id]) take('inp', { id }); } });
               upd(() => setSlot(el, id, (ent.inp[id] || 0) + '/' + r.ing[id], (ent.inp[id] || 0) < r.ing[id]));
               return el;
             });
             const outEls = Object.keys(r.out).map((id) => {
-              const el = slotEl(id, 0, { onDown: () => { const n = ent.out[id] || 0; if (n) { const k = takeToPlayer(id, n); ent.out[id] -= k; if (!ent.out[id]) delete ent.out[id]; } } });
+              const el = slotEl(id, 0, { onDown: () => { if (ent.out[id]) take('out', { id }); } });
               upd(() => setSlot(el, id, ent.out[id] || 0));
               return el;
             });
@@ -893,9 +873,8 @@
               const el = slotEl(r.main, undefined, {
                 tip: false,
                 onDown: () => {
-                  give(FG.machines.setRecipe(g, ent, r.id));
+                  app.act({ t: 'recipe', e: ent.id, r: r.id });
                   picker.hidden = true;
-                  showRecipe(); rebuildIO();
                 },
               });
               el.dataset.recipe = r.id;
@@ -914,10 +893,13 @@
           };
           showRecipe();
           rebuildIO();
+          // Redraw when the recipe changes (a command may land a moment after the click).
+          let shown = ent.recipe;
+          upd(() => { if (ent.recipe !== shown) { shown = ent.recipe; showRecipe(); rebuildIO(); } });
           put(recipeArea, picker, io, progressBar(() => ent.prog));
           if (pr.kind === 'uplink') {
-            const satEl = slotEl('satellite', 0, { onDown: () => { if (ent.satellite && takeToPlayer('satellite', 1)) ent.satellite = 0; } });
-            const launch = h('button', { class: 'btn primary', text: 'Launch', onclick: () => { if (ent.stages >= pr.stages && ent.satellite && !ent.launch) { ent.launch = 1; FG.sfx.play('launch'); this.close(); } } });
+            const satEl = slotEl('satellite', 0, { onDown: () => { if (ent.satellite) take('sat'); } });
+            const launch = h('button', { class: 'btn primary', text: 'Launch', onclick: () => { if (ent.stages >= pr.stages && ent.satellite && !ent.launch) { app.act({ t: 'launch', e: ent.id }); FG.sfx.play('launch'); this.close(); } } });
             const stages = h('div', { class: 'bar good progress-line' }, h('i'));
             const stTxt = h('div', { class: 'num' });
             upd(() => {
@@ -936,7 +918,7 @@
         case 'lab': {
           const packs = ['sci_1', 'sci_2', 'sci_mil', 'sci_3', 'sci_4'];
           const els = packs.map((id) => {
-            const el = slotEl(id, 0, { onDown: () => { const n = ent.inp[id] || 0; if (n) { const k = takeToPlayer(id, n); ent.inp[id] -= k; if (!ent.inp[id]) delete ent.inp[id]; } } });
+            const el = slotEl(id, 0, { onDown: () => { if (ent.inp[id]) take('inp', { id }); } });
             upd(() => {
               const t = g.research.current && D.techs[g.research.current];
               setSlot(el, id, ent.inp[id] || 0, !!(t && t.cost[id] && !(ent.inp[id] > 0)));
@@ -983,8 +965,9 @@
         case 'splitter': {
           const seg = h('div', { class: 'seg' });
           const opts = [[0, 'Left'], [-1, 'Balanced'], [1, 'Right']];
-          const renderSeg = () => { seg.innerHTML = ''; for (const [v, l] of opts) seg.appendChild(h('button', { class: ent.prio === v ? 'on' : '', text: l, onclick: () => { ent.prio = v; renderSeg(); } })); };
+          const renderSeg = () => { seg.innerHTML = ''; seg.dataset.prio = ent.prio; for (const [v, l] of opts) seg.appendChild(h('button', { class: ent.prio === v ? 'on' : '', text: l, onclick: () => { app.act({ t: 'set', e: ent.id, k: 'prio', v }); renderSeg(); } })); };
           renderSeg();
+          upd(() => { if (seg.dataset.prio !== String(ent.prio)) renderSeg(); });
           put(h('div', { class: 'group' }, h('div', { class: 'label', text: 'Output priority' }), seg), this.filterPicker(ent, upd, 'Filtered item goes to the priority side (left if balanced)'));
           break;
         }
@@ -993,7 +976,7 @@
           const renderSeg = () => {
             seg.innerHTML = '';
             seg.dataset.lm = ent.lm;
-            for (const [v, l] of [['in', 'Load'], ['out', 'Unload']]) seg.appendChild(h('button', { class: ent.lm === v ? 'on' : '', text: l, onclick: () => { if (ent.lm !== v) FG.rotateEntity(g, ent); renderSeg(); } }));
+            for (const [v, l] of [['in', 'Load'], ['out', 'Unload']]) seg.appendChild(h('button', { class: ent.lm === v ? 'on' : '', text: l, onclick: () => { app.act({ t: 'lm', e: ent.id, v }); } }));
           };
           renderSeg();
           upd(() => { if (seg.dataset.lm !== ent.lm) renderSeg(); });
@@ -1005,7 +988,7 @@
           break;
         }
         case 'turret': {
-          const el = slotEl(null, undefined, { onDown: () => { if (ent.ammo) { const k = takeToPlayer(ent.ammo.id, ent.ammo.n); ent.ammo.n -= k; if (!ent.ammo.n) ent.ammo = null; } } });
+          const el = slotEl(null, undefined, { onDown: () => { if (ent.ammo) take('ammo'); } });
           upd(() => setSlot(el, ent.ammo && ent.ammo.id, ent.ammo ? ent.ammo.n : undefined, !ent.ammo));
           put(h('div', { class: 'rowx' }, h('div', { class: 'group' }, h('div', { class: 'label', text: 'Ammo' }), el), kvs([['Range', () => pr.range + ' tiles'], ['Rounds in gun', () => String(ent.rounds)]])),
             h('div', { class: 'hint', text: 'Click magazines in your inventory to load them. Arms can keep turrets supplied from a belt.' }));
@@ -1041,7 +1024,7 @@
           if (FG.isBeltKind(pr.kind)) put(kvs([['Speed', () => Math.round(pr.speed * 8) + ' items/s'], ['Type', () => (pr.kind === 'underground' ? (ent.ug === 'in' ? 'Entrance' : 'Exit') + (ent.pair ? ', paired' : ', not paired') : pr.kind)]]));
       }
 
-      const inv = this.invGrid((i, s, ev) => this.transferToEntity(ent, s.id, ev.shiftKey ? g.player.inv.count(s.id) : ev.button === 2 ? Math.ceil(s.n / 2) : s.n));
+      const inv = this.invGrid((i, s, ev) => app.act({ t: 'toEnt', e: ent.id, id: s.id, n: ev.shiftKey ? g.player.inv.count(s.id) : ev.button === 2 ? Math.ceil(s.n / 2) : s.n }));
       const right = h('div', { class: 'pane' }, h('h3', { text: 'Your inventory' }), inv.el, h('div', { class: 'hint', text: 'Click to move a stack in · right-click moves half · shift-click moves all of that item.' }));
       const left = h('div', { class: 'pane' }, statusLine, machine);
       w.body.append(h('div', { class: 'panes' }, left, right));
@@ -1057,36 +1040,7 @@
       return w;
     }
 
-    transferToEntity(ent, id, n) {
-      const g = this.g;
-      const pr = D.protos[ent.p];
-      const it = D.items[id];
-      if (it.module && ent.modules) {
-        if (it.module.prod && pr.kind === 'beacon') { this.toast('Productivity modules cannot go in beacons', 'warn'); return; }
-        const i = ent.modules.indexOf(null);
-        if (i < 0) { this.toast('Module slots are full', 'warn'); return; }
-        ent.modules[i] = id;
-        g.player.inv.remove(id, 1);
-        g.markDirty('fx');
-        return;
-      }
-      let k = 0;
-      if (pr.kind === 'chest') k = n - ent.inv.add(id, n);
-      else k = FG.insertItem(g, ent, id, n, 'direct');
-      if (k > 0) g.player.inv.remove(id, k);
-      else this.toast(entName(ent) + ' does not accept ' + it.name, 'warn');
-    }
-
-    renameStop(ent, name) {
-      const g = this.g;
-      name = (name || '').trim().slice(0, 32);
-      if (!name || name === ent.name) return;
-      const old = ent.name;
-      ent.name = name;
-      // Keep schedules pointing here if this was the only stop with the old name.
-      if (!FG.trains.stopsNamed(g, old).length) for (const tr of g.rail.trains) for (const e of tr.schedule) if (e.station === old) e.station = name;
-      this.toast('Renamed to ' + name);
-    }
+    renameStop(ent, name) { this.app.act({ t: 'rename', e: ent.id, name }); }
 
     build_train(hit) {
       const g = this.g, app = this.app;
@@ -1096,28 +1050,19 @@
       const status = h('div');
       const left = h('div', { class: 'pane machine', style: 'min-width:min(460px, calc(100vw - 60px))' });
       const carUpd = [], schedUpd = [];
-      const takeToPlayer = (inv, id, n) => {
-        const k = Math.min(n, g.player.inv.space(id));
-        if (k <= 0) { this.toast('Inventory full', 'warn'); return; }
-        inv.remove(id, k);
-        g.player.inv.add(id, k);
-      };
       // Mode and boarding
       const seg = h('div', { class: 'seg' });
       const renderSeg = () => {
         seg.innerHTML = '';
+        seg.dataset.mode = tr.mode;
         for (const [v, l] of [['auto', 'Automatic'], ['manual', 'Manual']]) {
-          seg.appendChild(h('button', { class: tr.mode === v ? 'on' : '', text: l, onclick: () => {
-            tr.mode = v;
-            if (v === 'auto') tr.state = 'plan';
-            renderSeg();
-          } }));
+          seg.appendChild(h('button', { class: tr.mode === v ? 'on' : '', text: l, onclick: () => app.act({ t: 'trMode', tr: tr.id, v }) }));
         }
       };
       renderSeg();
       const rideBtn = h('button', { class: 'btn small', text: g.player.vehicle === tr.id ? 'Get out' : 'Get in', onclick: () => {
-        if (g.player.vehicle === tr.id) FG.trains.exit(g);
-        else { const p = FG.trains.carPose(tr, 0); if (FG.dist2(p.x, p.y, g.player.x, g.player.y) > 144) { this.toast('Walk closer to board', 'warn'); return; } g.player.vehicle = tr.id; if (!tr.schedule.length) tr.mode = 'manual'; }
+        if (g.player.vehicle !== tr.id) { const p = FG.trains.carPose(tr, 0); if (FG.dist2(p.x, p.y, g.player.x, g.player.y) > 144) { this.toast('Walk closer to board', 'warn'); return; } }
+        app.act({ t: 'trRide', tr: tr.id });
         this.close();
       } });
       left.append(status, h('div', { class: 'rowx' }, h('span', { class: 'label', text: 'Control' }), seg, rideBtn));
@@ -1134,14 +1079,14 @@
             car.type === 'loco' ? h('span', { text: car.flip ? 'faces back ←' : 'faces front →' }) : null);
           const grid = h('div', { class: 'grid', style: car.type === 'loco' ? 'grid-template-columns:repeat(3, var(--slot))' : '' });
           const els = car.inv.slots.map((_, j) => {
-            const el = slotEl(null, undefined, { onDown: (ev) => { const sl = car.inv.slots[j]; if (sl) takeToPlayer(car.inv, sl.id, ev.shiftKey ? car.inv.count(sl.id) : sl.n); } });
+            const el = slotEl(null, undefined, { onDown: (ev) => { const sl = car.inv.slots[j]; if (sl) app.act({ t: 'trTake', car: car.id, id: sl.id, n: ev.shiftKey ? car.inv.count(sl.id) : sl.n }); } });
             grid.appendChild(el);
             return el;
           });
           carUpd.push(() => car.inv.slots.forEach((sl, j) => setSlot(els[j], sl && sl.id, sl ? sl.n : undefined)));
           row.append(tag, grid);
           if (car.type === 'loco') row.appendChild(h('button', { class: 'btn small', text: 'Turn', title: 'Turn this locomotive around (train must be stopped)', onclick: () => {
-            if (!FG.trains.flipCar(g, tr, i)) this.toast('Stop the train first', 'warn'); else renderCars();
+            if (tr.speed !== 0) this.toast('Stop the train first', 'warn'); else app.act({ t: 'flip', car: car.id });
           } }));
           carsBox.appendChild(row);
         });
@@ -1157,50 +1102,38 @@
         tr.schedule.forEach((e, i) => {
           const stSel = h('select', { id: 'sched-station-' + i, 'aria-label': 'Stop' });
           for (const n of new Set(names.concat([e.station]))) stSel.appendChild(h('option', { value: n, text: n, selected: n === e.station }));
-          stSel.addEventListener('change', () => { e.station = stSel.value; if (tr.cur === i && tr.state !== 'station') tr.state = 'plan'; });
+          stSel.addEventListener('change', () => app.act({ t: 'sched', tr: tr.id, op: 'station', i, v: stSel.value }));
           const cond = h('select', { id: 'sched-cond-' + i, 'aria-label': 'Wait condition' });
           for (const [v, l] of [['full', 'until full'], ['empty', 'until empty'], ['time', 'for seconds'], ['inactive', 'until idle for seconds']]) cond.appendChild(h('option', { value: v, text: l, selected: v === e.cond }));
           const val = h('input', { type: 'number', id: 'sched-v-' + i, min: '1', max: '600', value: String(e.v || 10), style: 'width:64px', 'aria-label': 'Seconds' });
           val.hidden = e.cond !== 'time' && e.cond !== 'inactive';
-          cond.addEventListener('change', () => { e.cond = cond.value; if (!e.v) e.v = 10; val.hidden = e.cond !== 'time' && e.cond !== 'inactive'; });
-          val.addEventListener('change', () => { e.v = FG.clamp(parseInt(val.value, 10) || 10, 1, 600); });
+          cond.addEventListener('change', () => { app.act({ t: 'sched', tr: tr.id, op: 'cond', i, v: cond.value }); val.hidden = cond.value !== 'time' && cond.value !== 'inactive'; });
+          val.addEventListener('change', () => app.act({ t: 'sched', tr: tr.id, op: 'v', i, v: parseInt(val.value, 10) || 10 }));
           const cur = h('span', { class: 'num', style: 'width:18px;color:var(--amber)', text: '' });
           schedUpd.push(() => { cur.textContent = tr.cur === i && tr.mode === 'auto' ? '▶' : ''; });
           sched.appendChild(h('div', { class: 'sched-row' },
             cur, stSel, h('span', { class: 'hint', text: 'wait' }), cond, val,
-            h('button', { class: 'btn small', text: 'Go now', title: 'Send the train here next', onclick: () => { tr.cur = i; if (tr.mode === 'auto') tr.state = 'plan'; } }),
-            h('button', { class: 'btn small danger', text: '✕', 'aria-label': 'Remove stop', onclick: () => { tr.schedule.splice(i, 1); if (tr.cur >= tr.schedule.length) tr.cur = 0; renderSched(); } })));
+            h('button', { class: 'btn small', text: 'Go now', title: 'Send the train here next', onclick: () => app.act({ t: 'sched', tr: tr.id, op: 'go', i }) }),
+            h('button', { class: 'btn small danger', text: '✕', 'aria-label': 'Remove stop', onclick: () => app.act({ t: 'sched', tr: tr.id, op: 'del', i }) })));
         });
-        const add = h('button', { class: 'btn small', text: '+ Add stop', onclick: () => {
-          const n = FG.trains.stopNames(g);
-          if (!n.length) { this.toast('Place a train stop first', 'warn'); return; }
-          const prev = tr.schedule.length ? tr.schedule[tr.schedule.length - 1].station : null;
-          tr.schedule.push({ station: n.find((x) => x !== prev) || n[0], cond: tr.schedule.length ? 'empty' : 'full', v: 10 });
-          renderSched();
-        } });
+        const add = h('button', { class: 'btn small', text: '+ Add stop', onclick: () => app.act({ t: 'sched', tr: tr.id, op: 'add' }) });
         sched.appendChild(h('div', { style: 'margin-top:4px' }, add));
         if (!tr.schedule.length) sched.appendChild(h('div', { class: 'hint', text: 'Add stops, then switch to Automatic. A typical route: wait at the mine until full, then at the base until empty.' }));
       };
       renderSched();
       left.append(carsBox, sched, h('div', { class: 'hint', text: 'A train only drives the way a locomotive faces. For stations at the end of a line, add a second locomotive facing back, or build a loop.' }));
-      const inv = this.invGrid((i, sl, ev) => {
-        const id = sl.id;
-        let left2 = ev.shiftKey ? g.player.inv.count(id) : ev.button === 2 ? Math.ceil(sl.n / 2) : sl.n;
-        let moved = 0;
-        const order = D.items[id].fuel ? tr.cars.filter((c) => c.type === 'loco').concat(tr.cars.filter((c) => c.type === 'wagon')) : tr.cars.filter((c) => c.type === 'wagon');
-        for (const car of order) {
-          if (left2 <= 0) break;
-          const k = FG.trains.carInsert(car, id, left2);
-          if (k > 0) { g.player.inv.remove(id, k); left2 -= k; moved += k; }
-        }
-        if (!moved) this.toast('No room for that in this train', 'warn');
-      });
+      const inv = this.invGrid((i, sl, ev) => app.act({ t: 'trLoad', tr: tr.id, id: sl.id, n: ev.shiftKey ? g.player.inv.count(sl.id) : ev.button === 2 ? Math.ceil(sl.n / 2) : sl.n }));
       const right = h('div', { class: 'pane' }, h('h3', { text: 'Your inventory' }), inv.el, h('div', { class: 'hint', text: 'Click fuel to load the locomotives, anything else goes into the wagons. Right-click moves half a stack.' }));
       w.body.append(h('div', { class: 'panes' }, left, right));
-      let lastCars = tr.cars.length;
+      let lastCars = tr.cars.map((c) => c.id + (c.flip ? 'f' : '')).join();
+      let lastSched = JSON.stringify(tr.schedule);
       w.update = () => {
         if (tr.dead) { this.close(); return; }
-        if (tr.cars.length !== lastCars) { lastCars = tr.cars.length; renderCars(); }
+        const cars = tr.cars.map((c) => c.id + (c.flip ? 'f' : '')).join();
+        if (cars !== lastCars) { lastCars = cars; renderCars(); }
+        const sch = JSON.stringify(tr.schedule);
+        if (sch !== lastSched && !(document.activeElement && document.activeElement.closest && document.activeElement.closest('.sched-row'))) { lastSched = sch; renderSched(); }
+        if (seg.dataset.mode !== tr.mode) renderSeg();
         inv.update();
         const st = trainStatus(g, tr);
         const k = st.join('|');
@@ -1240,8 +1173,8 @@
         const r = D.recipeFor[id];
         return !r || g.recipeEnabled(r.id) || D.items[id].sub === 'raw';
       }).sort((a, b) => D.items[a].order - D.items[b].order);
-      list.appendChild(h('button', { class: 'btn small', style: 'grid-column: span 3', text: 'No filter', onclick: () => { ent.filter = null; list.hidden = true; } }));
-      for (const id of ids) list.appendChild(slotEl(id, undefined, { onDown: () => { ent.filter = id; list.hidden = true; } }));
+      list.appendChild(h('button', { class: 'btn small', style: 'grid-column: span 3', text: 'No filter', onclick: () => { this.app.act({ t: 'set', e: ent.id, k: 'filter', v: null }); list.hidden = true; } }));
+      for (const id of ids) list.appendChild(slotEl(id, undefined, { onDown: () => { this.app.act({ t: 'set', e: ent.id, k: 'filter', v: id }); list.hidden = true; } }));
       return h('div', { class: 'group' }, h('div', { class: 'label', text: 'Filter' }), h('div', { class: 'rowx' }, slot, h('span', { class: 'hint', text: hint })), list);
     }
 
@@ -1268,8 +1201,8 @@
           card.addEventListener('mousedown', (ev) => {
             ev.preventDefault();
             if (g.research.done[t.id]) return;
-            if (ev.button === 2) g.cancelResearch(t.id);
-            else g.queueResearch(t.id, ev.shiftKey);
+            if (ev.button === 2) this.app.act({ t: 'unresearch', id: t.id });
+            else this.app.act({ t: 'research', id: t.id, front: ev.shiftKey });
             update(true);
           });
           card.addEventListener('contextmenu', (ev) => ev.preventDefault());
@@ -1306,7 +1239,7 @@
           const q = h('div', { class: 'tech-queue' });
           for (const id of r.queue) {
             const el = h('div', { class: 'q', 'data-tech': id }, img(D.techs[id].icon, 24), D.techs[id].name);
-            el.addEventListener('mousedown', (ev) => { ev.preventDefault(); g.cancelResearch(id); update(true); });
+            el.addEventListener('mousedown', (ev) => { ev.preventDefault(); this.app.act({ t: 'unresearch', id }); update(true); });
             el.addEventListener('contextmenu', (ev) => ev.preventDefault());
             q.appendChild(el);
           }

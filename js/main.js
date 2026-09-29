@@ -24,6 +24,23 @@
   app.input = new FG.Input(app);
   window.addEventListener('resize', () => app.renderer.resize());
 
+  // Every change a player makes to the world goes through here as a command. In single
+  // player it runs at once; in multiplayer the server stamps it with a tick and every copy
+  // of the world runs it then. cb (optional) gets the command's result, for UI touches only.
+  app.act = function (c, cb) {
+    const g = app.game;
+    if (!g || app.titleShown) return undefined;
+    if (app.net && app.net.live) { app.net.send(c, cb); return undefined; }
+    const r = FG.cmd.exec(g, g.localPid, c);
+    if (cb) cb(r);
+    return r;
+  };
+  // The local player's movement, aim, shooting and mining for this tick.
+  app.setInput = function (inp) {
+    if (app.net && app.net.live) { app.net.setInput(inp); return; }
+    if (app.game) FG.cmd.exec(app.game, app.game.localPid, inp);
+  };
+
   app.setCursor = function (id) {
     if (!id) { app.cursor = null; return; }
     app.cursor = { item: id };

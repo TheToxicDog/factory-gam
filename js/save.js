@@ -5,7 +5,7 @@
   const D = FG.data;
   const save = (FG.save = {});
   const SKIP = new Set(['net', 'tgt', 'outs', 'pair', 'curveIn', 'inDir', 'len', 'speed', 'owner', 'fmap', 'wires', 'target',
-    'cap', 'fx', 'want', 'status', 'pairX', 'pairY', 'lastHit', 'dead', 'fbs', 'halves', 'inv', 'ox', 'oy', 'node', 'busy']);
+    'cap', 'fx', 'want', 'status', 'pairX', 'pairY', 'lastHit', 'dead', 'fbs', 'halves', 'inv', 'ox', 'oy', 'node', 'busy', 'spin']);
 
   function b64(bytes) {
     let s = '';
@@ -32,6 +32,25 @@
     return o;
   }
 
+  const P_KEYS = ['id', 'name', 'color', 'away', 'x', 'y', 'hp', 'queue', 'craftProg', 'rounds', 'ammoDmg', 'vehicle', 'dead', 'cd', 'facing', 'walk', 'lastHit', 'repairPool', 'mining', 'trainHit', 'aim'];
+  function playerToJSON(p) {
+    const o = { inv: p.inv.slots, invSize: p.inv.size };
+    for (const k of P_KEYS) if (p[k] !== undefined) o[k] = p[k];
+    return o;
+  }
+  function playerFromJSON(g, o) {
+    const pid = o.id || 1;
+    const p = g.players.get(pid) || g.addPlayer(pid, o.name, o.color);
+    for (const k of P_KEYS) if (o[k] !== undefined) p[k] = o[k];
+    p.id = pid;
+    p.inv = FG.Inventory.from(o.inv);
+    if (o.invSize && p.inv.size < o.invSize) p.inv.resize(o.invSize);
+    p.queue = (o.queue || []).filter((q) => D.recipes[q.rid]);
+    p.craftProg = p.craftProg || 0; p.rounds = p.rounds || 0; p.ammoDmg = p.ammoDmg || 5;
+    p.vehicle = p.vehicle || null;
+    return p;
+  }
+
   save.serialize = function (g) {
     const w = g.world;
     const tiles = [];
@@ -49,10 +68,11 @@
       ents: Array.from(g.ents.values()).map(entToJSON),
       ghosts: Array.from(g.ghosts.values()),
       research: g.research,
-      player: {
-        x: g.player.x, y: g.player.y, hp: g.player.hp, inv: g.player.inv.slots, queue: g.player.queue,
-        craftProg: g.player.craftProg, rounds: g.player.rounds, ammoDmg: g.player.ammoDmg, hotbar: g.hotbar || null, vehicle: g.player.vehicle || null,
-      },
+      player: playerToJSON(g.localPlayer() || g.player),
+      hotbar: g.hotbar || null,
+      players: Array.from(g.players.values()).map(playerToJSON),
+      inputs: Array.from(g.inputs.entries()),
+      localPid: g.localPid, nextPid: g.nextPid, rs: g.rs,
       stats: { total: g.stats.total, sec: g.stats.sec, ten: g.stats.ten, min: g.stats.min, kills: g.stats.kills, pollution: g.stats.pollution, nestsKilled: g.stats.nestsKilled || 0 },
       enemies: {
         evo: en.evo, expandAt: en.expandAt, lastPoll: en.lastPoll,
@@ -118,11 +138,18 @@
     g.research.queue = (r.queue || []).filter((x) => D.techs[x]);
     g.research.current = r.current && D.techs[r.current] ? r.current : null;
 
-    const p = data.player;
-    Object.assign(g.player, { x: p.x, y: p.y, hp: p.hp, craftProg: p.craftProg || 0, rounds: p.rounds || 0, ammoDmg: p.ammoDmg || 5 });
-    g.player.inv = FG.Inventory.from(p.inv);
-    g.player.queue = (p.queue || []).filter((q) => D.recipes[q.rid]);
-    g.hotbar = p.hotbar || null;
+    if (data.players && data.players.length) {
+      g.players.clear(); g.inputs.clear();
+      for (const o of data.players) playerFromJSON(g, o);
+      for (const [pid, inp] of data.inputs || []) if (g.players.has(pid)) g.inputs.set(pid, Object.assign(g.newInput(), inp));
+      g.nextPid = data.nextPid || g.nextPid;
+      g.localPid = g.players.has(data.localPid) ? data.localPid : g.players.keys().next().value;
+    } else {
+      playerFromJSON(g, Object.assign({ id: 1 }, data.player));
+    }
+    g.player = g.localPlayer();
+    g.input = g.inputs.get(g.localPid);
+    g.hotbar = data.hotbar || (data.player && data.player.hotbar) || null;
 
     const s = data.stats;
     Object.assign(g.stats, { total: s.total, sec: s.sec || [], ten: s.ten || [], min: s.min || [], kills: s.kills || 0, pollution: s.pollution || 0, nestsKilled: s.nestsKilled || 0 });
@@ -142,13 +169,14 @@
       u.hp = hp;
     }
     FG.trains.deserialize(g, data.trains);
-    g.player.vehicle = data.player.vehicle || null;
+    for (const o of data.players || [Object.assign({ id: 1 }, data.player)]) { const p = g.players.get(o.id || 1); if (p) p.vehicle = o.vehicle || null; }
     g.objectives.idx = data.objectives || 0;
     g.launches = data.launches || 0;
     g.won = !!data.won;
     g.wonAt = data.wonAt || 0;
     g.lostBuildings = data.lostBuildings || 0;
     g.dirty = { belts: true, power: true, fluid: true, fx: true };
+    if (data.rs) g.rs = data.rs >>> 0;
     return g;
   };
 

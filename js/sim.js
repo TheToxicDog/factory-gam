@@ -105,21 +105,81 @@
       this.launches = 0;
       this.won = false;
       this.effects = []; // transient visual effects (render only)
-      this.input = { mx: 0, my: 0, mine: null, shoot: false, aimX: 0, aimY: 0 };
-      this.player = {
+      // Seeded random numbers, so every copy of a multiplayer world runs the same.
+      this.rs = ((this.opts.seed ^ 0x9e3779b9) >>> 0) || 1;
+      // Players by id. `player` and `input` point at the one being simulated or acting
+      // right now; between updates they point at the local player (`localPid`).
+      this.players = new Map();
+      this.inputs = new Map();
+      this.nextPid = 2;
+      this.localPid = 1;
+      this.ctxPid = null;
+      this.addPlayer(1, 'Engineer');
+      this.player = this.players.get(1);
+      this.input = this.inputs.get(1);
+      this.enemies = new FG.Enemies(this);
+      this.objectives = new FG.Objectives(this);
+    }
+
+    rand() {
+      let t = (this.rs = (this.rs + 0x6D2B79F5) >>> 0);
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    }
+
+    // ---------------------------------------------------------------- players
+    newInput() { return { mx: 0, my: 0, mine: null, shoot: false, aimX: 0, aimY: 0, repair: 0 }; }
+    addPlayer(pid, name, color) {
+      let size = 60;
+      for (const tid in this.research.done) for (const ef of (D.techs[tid] ? D.techs[tid].effects : [])) if (ef.type === 'inv') size += ef.v;
+      const p = {
+        id: pid, name: name || 'Engineer', color: color || '#e07a2a', away: false,
         x: this.world.spawnX + 0.5, y: this.world.spawnY + 0.5,
-        inv: new FG.Inventory(60), hp: 250, maxHp: 250, lastHit: -9999,
-        queue: [], craftProg: 0, mining: null, facing: 2, walk: 0, gun: 'pistol', cd: 0, rounds: 0, dead: 0,
+        inv: new FG.Inventory(size), hp: 250, maxHp: 250, lastHit: -9999,
+        queue: [], craftProg: 0, mining: null, facing: 2, walk: 0, gun: 'pistol', cd: 0, rounds: 0, dead: 0, repairPool: 0,
       };
-      const inv = this.player.inv;
+      const inv = p.inv;
       inv.add('iron_plate', 8);
       inv.add('wood', 4);
       inv.add('burner_drill', 1);
       inv.add('stone_furnace', 1);
       inv.add('pistol', 1);
       inv.add('ammo_basic', 10);
-      this.enemies = new FG.Enemies(this);
-      this.objectives = new FG.Objectives(this);
+      this.players.set(pid, p);
+      this.inputs.set(pid, this.newInput());
+      return p;
+    }
+    localPlayer() { return this.players.get(this.localPid) || null; }
+    // Run fn with `player`/`input` set to each player who is in the world.
+    eachPlayer(fn) {
+      const keepP = this.player, keepI = this.input, keepC = this.ctxPid;
+      for (const [pid, p] of this.players) {
+        if (p.away) continue;
+        this.player = p; this.input = this.inputs.get(pid); this.ctxPid = pid;
+        fn(p);
+      }
+      this.player = keepP; this.input = keepI; this.ctxPid = keepC;
+    }
+    // Run fn as one player (for their commands); messages reach only that player's screen.
+    asPlayer(pid, fn) {
+      const p = this.players.get(pid);
+      if (!p) return undefined;
+      const keepP = this.player, keepI = this.input, keepC = this.ctxPid;
+      this.player = p; this.input = this.inputs.get(pid); this.ctxPid = pid;
+      try { return fn(p); } finally { this.player = keepP; this.input = keepI; this.ctxPid = keepC; }
+    }
+    // Is the current context someone else (so their messages and sounds stay off my screen)?
+    remoteCtx() { return this.ctxPid !== null && this.ctxPid !== this.localPid; }
+    activePlayers() { const out = []; for (const p of this.players.values()) if (!p.away) out.push(p); return out; }
+    nearestPlayer(x, y, maxD2) {
+      let best = null, bd = maxD2 === undefined ? Infinity : maxD2;
+      for (const p of this.players.values()) {
+        if (p.away || p.dead) continue;
+        const d = FG.dist2(p.x, p.y, x, y);
+        if (d < bd) { bd = d; best = p; }
+      }
+      return best;
     }
 
     // Flag the topology caches affected by a change to an entity of this kind.
@@ -154,7 +214,7 @@
       this.stats.pollution += amt;
     }
 
-    msg(text, kind) { FG.emit('message', text, kind || 'info'); }
+    msg(text, kind) { if (!this.remoteCtx()) FG.emit('message', text, kind || 'info'); }
 
     // -------------------------------------------------------------- research
     techState(tid) {
@@ -210,11 +270,12 @@
     applyEffect(ef) {
       const b = this.bonus;
       switch (ef.type) {
-        case 'inv': {
-          const extra = this.player.inv.resize(this.player.inv.size + ef.v);
-          for (const [id, n] of extra) this.player.inv.add(id, n);
+        case 'inv':
+          for (const p of this.players.values()) {
+            const extra = p.inv.resize(p.inv.size + ef.v);
+            for (const [id, n] of extra) p.inv.add(id, n);
+          }
           break;
-        }
         case 'hand': b.hand += ef.v; break;
         case 'lab_speed': b.labSpeed += ef.v; break;
         case 'mining_prod': b.miningProd += ef.v; break;
@@ -349,6 +410,7 @@
         if (p.dead === 0) {
           p.x = this.world.spawnX + 0.5; p.y = this.world.spawnY + 0.5; p.hp = p.maxHp;
           this.msg('You were rebuilt at the landing site.', 'warn');
+          if (this.players.size > 1) { const who = p.name; this.ctxWrap(() => this.msg(who + ' was rebuilt at the landing site', 'info'), p.id); }
         }
         return;
       }
@@ -383,8 +445,26 @@
         if (!this.playerBlocked(nx, ny)) { p.x = nx; p.y = ny; }
       }
       if (this.tick - p.lastHit > 600 && p.hp < p.maxHp) p.hp = Math.min(p.maxHp, p.hp + 0.1);
+      this.updateRepair();
       if (this.tick % 30 === 0) this.world.chart((p.x / FG.CHUNK) | 0, (p.y / FG.CHUNK) | 0, 2);
       this.updateMining();
+    }
+    // Holding a repair pack on a damaged building mends it a little every tick.
+    updateRepair() {
+      const p = this.player, id = this.input.repair;
+      if (!id) return;
+      const e = this.ents.get(id);
+      if (!e) return;
+      const pr = D.protos[e.p];
+      if (e.hp >= pr.hp || FG.dist2(p.x, p.y, e.x + e.w / 2, e.y + e.h / 2) > 13 * 13) return;
+      if (p.repairPool <= 0 && p.inv.remove('repair_pack', 1)) { p.repairPool = D.items.repair_pack.repair; this.stats.consume('repair_pack', 1); FG.emit('inventory'); }
+      if (p.repairPool > 0) { const k = Math.min(2, pr.hp - e.hp, p.repairPool); e.hp += k; p.repairPool -= k; }
+    }
+    // Messages about someone else, shown to everyone but them.
+    ctxWrap(fn, notPid) {
+      const keep = this.ctxPid;
+      this.ctxPid = this.localPid === notPid ? -1 : null;
+      try { fn(); } finally { this.ctxPid = keep; }
     }
     // Mining time in ticks for the current target.
     mineTime(t) {
@@ -403,15 +483,16 @@
       const p = this.player;
       const t = this.input.mine;
       if (!t) { p.mining = null; return; }
-      if (!p.mining || p.mining.key !== t.key) p.mining = { key: t.key, prog: 0 };
+      if (!p.mining || p.mining.key !== t.key) p.mining = { key: t.key, prog: 0, cx: t.cx, cy: t.cy };
       if (t.kind === 'ent' && !this.ents.get(t.id)) { p.mining = null; return; }
       if (t.kind === 'car' && !FG.trains.findCar(this, t.id)) { p.mining = null; return; }
-      if (t.kind === 'rail' && t.pc.dead) { p.mining = null; return; }
+      const pc = t.kind === 'rail' ? this.rail.pieces.get(t.id) : null;
+      if (t.kind === 'rail' && (!pc || pc.dead)) { p.mining = null; return; }
       p.mining.prog += 1 / this.mineTime(t);
       if (p.mining.prog < 1) return;
       p.mining.prog = 0;
       if (t.kind === 'car') this.pickUpCar(FG.trains.findCar(this, t.id));
-      else if (t.kind === 'rail') this.pickUpRail(t.pc);
+      else if (t.kind === 'rail') this.pickUpRail(pc);
       else if (t.kind === 'ent') this.pickUpEntity(this.ents.get(t.id));
       else this.mineTile(t.x, t.y);
     }
@@ -648,9 +729,11 @@
       FG.trains.update(this);
       this.enemies.update();
       FG.power.update(this);
-      this.updatePlayer();
-      this.updateCrafting();
-      this.updateDrones();
+      this.eachPlayer(() => {
+        this.updatePlayer();
+        this.updateCrafting();
+        this.updateDrones();
+      });
       for (let i = this.effects.length - 1; i >= 0; i--) {
         const f = this.effects[i];
         if (++f.t >= f.life) this.effects.splice(i, 1);
@@ -671,4 +754,50 @@
     }
   }
   FG.Game = Game;
+
+  // A checksum of the simulation state. Multiplayer peers compare it with the server's to
+  // spot a copy of the world that has drifted, which then reloads from the server.
+  const HASH_SKIP = new Set(['net', 'tgt', 'outs', 'pair', 'owner', 'fmap', 'wires', 'target', 'fx', 'node', 'spin', 'art', 'lanes', 'halves', 'fbs', 'conns', 'status', 'want', 'group']);
+  const f64 = new Float64Array(1), u32 = new Uint32Array(f64.buffer);
+  function hv(h, v) {
+    if (typeof v === 'number') {
+      f64[0] = v;
+      h = Math.imul(h ^ u32[0], 16777619);
+      return Math.imul(h ^ u32[1], 16777619);
+    }
+    if (typeof v === 'string') { for (let i = 0; i < v.length; i++) h = Math.imul(h ^ v.charCodeAt(i), 16777619); return h; }
+    if (v === true) return Math.imul(h ^ 1, 16777619);
+    if (v === false || v === null || v === undefined) return Math.imul(h ^ 2, 16777619);
+    return h;
+  }
+  function hobj(h, o, depth) {
+    if (o === null || typeof o !== 'object') return hv(h, o);
+    if (depth > 2) return h;
+    if (Array.isArray(o)) { for (const x of o) h = hobj(h, x, depth + 1); return h; }
+    if (o instanceof FG.Inventory) return hobj(h, o.slots, depth + 1);
+    if (o instanceof Map || o instanceof Set || ArrayBuffer.isView(o)) return h;
+    for (const k in o) {
+      if (HASH_SKIP.has(k) || k.charCodeAt(0) === 95) continue;
+      h = hv(h, k);
+      h = hobj(h, o[k], depth + 1);
+    }
+    return h;
+  }
+  FG.stateHash = function (g) {
+    let h = 2166136261 | 0;
+    h = hv(h, g.tick); h = hv(h, g.rs); h = hv(h, g.nextId); h = hv(h, g.ents.size);
+    for (const e of g.ents.values()) {
+      h = hobj(h, e, 0);
+      if (e.lanes) for (const l of e.lanes) { h = hv(h, l.ids.length); for (const x of l.pos || []) h = hv(h, x); }
+    }
+    for (const p of g.players.values()) h = hobj(h, p, 0);
+    for (const i of g.inputs.values()) h = hobj(h, i, 0);
+    const en = g.enemies;
+    h = hv(h, en.evo); h = hv(h, en.units.length); h = hv(h, en.nests.length);
+    for (const u of en.units) { h = hv(h, u.x); h = hv(h, u.y); h = hv(h, u.hp); }
+    for (const n of en.nests) h = hv(h, n.hp);
+    for (const tr of g.rail.trains) { h = hv(h, tr.headS); h = hv(h, tr.speed); h = hv(h, tr.cars.length); }
+    h = hobj(h, g.research.progress, 0);
+    return h >>> 0;
+  };
 })();

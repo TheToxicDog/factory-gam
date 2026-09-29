@@ -107,12 +107,10 @@
           break;
         case 'Enter': case 'NumpadEnter':
           e.preventDefault();
-          if (!FG.trains.board(this.g)) this.warn('Stand next to a train to get in');
-          else ui.toast(this.g.player.vehicle ? 'Aboard · W go · S brake (hold to reverse) · A/D choose turns · Enter to leave' : 'You left the train');
+          app.act({ t: 'board' });
           break;
         case 'KeyG': {
-          const [wx, wy] = [this.mouse.wx, this.mouse.wy];
-          if (!this.g.enemies.throwGrenade(wx, wy)) this.warn(this.g.player.inv.count('grenade') ? 'Not ready yet' : 'You have no grenades');
+          app.act({ t: 'grenade', x: this.mouse.wx, y: this.mouse.wy });
           break;
         }
         case 'Space': e.preventDefault(); break;
@@ -157,13 +155,13 @@
       const hv = app.view.hover;
       if (hv && hv.car) {
         if (hv.car.car.type !== 'loco') { this.warn('Only locomotives have a facing'); return; }
-        if (!FG.trains.flipCar(this.g, hv.car.train, hv.car.index)) this.warn('Stop the train before turning a locomotive');
+        app.act({ t: 'flip', car: hv.car.car.id });
         return;
       }
       if (hv && hv.ent) {
         const e = hv.ent;
         if (!this.inReach(e.x + e.w / 2, e.y + e.h / 2, BUILD_REACH)) { this.warn('Out of reach'); return; }
-        if (!FG.rotateEntity(this.g, e, reverse) && D.protos[e.p].rotatable) this.warn('Pick it up and place it again to turn it');
+        app.act({ t: 'rot', e: e.id, rev: !!reverse });
       }
     }
 
@@ -203,8 +201,8 @@
         m.right = true;
         if (e.shiftKey) { this.copySettings(); m.right = false; return; }
         const hv = app.view.hover;
-        if (hv && hv.ghost && !hv.ent) { this.g.removeGhost(hv.ghost); m.right = false; }
-        else if (hv && hv.railGhost) { this.g.rail.ghosts.delete(hv.railGhost.pc.key); m.right = false; }
+        if (hv && hv.ghost && !hv.ent) { app.act({ t: 'ghostDel', gh: hv.ghost.id }); m.right = false; }
+        else if (hv && hv.railGhost) { app.act({ t: 'railGhostDel', key: hv.railGhost.pc.key }); m.right = false; }
         return;
       }
       if (e.button !== 0) return;
@@ -239,8 +237,8 @@
         if (it.track) { this.railStart(); return; }
         if (hv && hv.car && !it.place) { this.insertIntoCar(hv.car, c.item, e.ctrlKey); return; }
         if (hv && hv.ent && (e.ctrlKey || !it.place)) { this.insertInto(hv.ent, c.item, e.ctrlKey); return; }
-        if (it.place) { this.drag = { last: null, placed: [] }; this.dragBuild(); return; }
-        if (c.item === 'grenade') { g.enemies.throwGrenade(this.mouse.wx, this.mouse.wy); return; }
+        if (it.place) { this.drag = { last: null, placed: new Map() }; this.dragBuild(); return; }
+        if (c.item === 'grenade') { app.act({ t: 'grenade', x: this.mouse.wx, y: this.mouse.wy }); return; }
         if (it.repair) return; // handled continuously in update()
         return;
       }
@@ -266,8 +264,7 @@
         const item = D.protos[gh.p].item;
         if (!g.player.inv.count(item)) { this.warn('You have no ' + D.items[item].name); return; }
         if (!this.inReach(gh.x + gh.w / 2, gh.y + gh.h / 2, BUILD_REACH)) { this.warn('Out of reach'); return; }
-        g.removeGhost(gh);
-        if (!g.build(item, gh.x, gh.y, gh.dir, gh.settings)) g.addGhost(gh.p, gh.x, gh.y, gh.dir, gh.settings);
+        app.act({ t: 'ghostBuild', gh: gh.id });
       }
     }
 
@@ -276,12 +273,9 @@
       const m = this.mouse;
       if (!g.player.inv.count(itemId)) { this.warn('You have no ' + D.items[itemId].name); this.app.cursor = null; return; }
       if (!this.inReach(m.wx, m.wy, BUILD_REACH)) { this.warn('Out of reach'); return; }
-      const r = FG.trains.placeCar(g, D.items[itemId].car, m.wx, m.wy, this.app.dir);
-      if (!r.ok) { this.warn(r.reason); return; }
-      g.player.inv.remove(itemId, 1);
-      FG.emit('sound', 'place');
-      FG.emit('inventory');
-      if (!g.player.inv.count(itemId)) this.app.cursor = null;
+      const plan = FG.trains.planCar(g, m.wx, m.wy, this.app.dir);
+      if (!plan.ok) { this.warn(plan.reason); return; }
+      this.app.act({ t: 'car', item: itemId, x: m.wx, y: m.wy, dir: this.app.dir });
     }
 
     // Z: put one of the held item into the machine, chest, belt or rail car under the cursor.
@@ -293,112 +287,53 @@
       if (!c || !c.item || c.ghost) { if (pressed) this.warn('Hold an item first, then press Z over a machine'); return; }
       const id = c.item, name = D.items[id].name;
       if (!hv || !(hv.ent || hv.car)) { if (pressed) this.warn('Point at a machine, chest, belt or train to put one ' + name.toLowerCase() + ' in'); return; }
-      let key, cx, cy, put, what, onBelt = false;
+      let key, cx, cy;
+      const c2 = { t: 'drop1', id };
       if (hv.car) {
         const hit = hv.car, p = FG.trains.carPose(hit.train, hit.index);
         key = 'c' + hit.car.id; cx = p.x; cy = p.y;
-        what = D.items[FG.trains.itemFor(hit.car)].name;
-        put = () => FG.trains.carInsert(hit.car, id, 1);
+        c2.car = hit.car.id;
       } else {
         const e = hv.ent, pr = D.protos[e.p];
         key = 'e' + e.id; cx = e.x + e.w / 2; cy = e.y + e.h / 2;
-        what = D.items[pr.item].name;
+        c2.e = e.id;
         const node = FG.isBeltKind(pr.kind) ? FG.belts.nodeAt(g, hv.tile[0], hv.tile[1]) : null;
         if (node) {
           // On a belt: one item per tile, on the lane nearest the cursor.
-          onBelt = true;
           key += ':' + hv.tile.join(',');
           cx = hv.tile[0] + 0.5; cy = hv.tile[1] + 0.5;
           const r = FG.rightOf(node.dir);
-          const lane = (m.wx - cx) * FG.DX[r] + (m.wy - cy) * FG.DY[r] >= 0 ? 1 : 0;
-          put = () => (FG.belts.laneInsert(node.lanes[lane], id, Math.min(0.5, node.len * 0.5), node.len) ? 1 : 0);
-        } else if (pr.kind === 'chest') put = () => 1 - e.inv.add(id, 1);
-        else put = () => FG.insertItem(g, e, id, 1, 'direct');
+          c2.tile = hv.tile.slice();
+          c2.lane = (m.wx - cx) * FG.DX[r] + (m.wy - cy) * FG.DY[r] >= 0 ? 1 : 0;
+        }
       }
       if (this.zDone.has(key)) return;
       this.zDone.add(key);
       if (!g.player.inv.count(id)) { app.cursor = null; return; }
       if (!this.inReach(cx, cy, BUILD_REACH)) { this.warn('Out of reach'); return; }
-      if (put() > 0) {
-        g.player.inv.remove(id, 1);
-        g.effects.push({ type: 'drop', id, x: cx, y: cy, t: 0, life: 30 });
-        FG.emit('sound', 'pickup');
-        FG.emit('inventory');
-        if (!g.player.inv.count(id)) app.cursor = null;
-      } else this.warn(onBelt ? 'No room on the belt there' : what + ' can\'t take ' + name.toLowerCase());
+      app.act(c2);
     }
 
     insertIntoCar(hit, id, all) {
       const g = this.g;
       const p = FG.trains.carPose(hit.train, hit.index);
       if (!this.inReach(p.x, p.y, BUILD_REACH)) { this.warn('Out of reach'); return; }
-      const have = g.player.inv.count(id);
-      if (!have) { this.app.cursor = null; return; }
-      const n = all ? have : Math.min(have, D.items[id].stack);
-      const k = FG.trains.carInsert(hit.car, id, n);
-      if (k > 0) { g.player.inv.remove(id, k); FG.emit('message', 'Inserted ' + k + ' ' + D.items[id].name.toLowerCase(), 'info'); }
-      else this.warn(hit.car.type === 'loco' ? 'Locomotives only take fuel' : 'That wagon is full');
-      if (!g.player.inv.count(id)) this.app.cursor = null;
+      if (!g.player.inv.count(id)) { this.app.cursor = null; return; }
+      this.app.act({ t: 'insCar', car: hit.car.id, id, all: !!all });
     }
 
     insertInto(ent, id, all) {
       const g = this.g;
       if (!this.inReach(ent.x + ent.w / 2, ent.y + ent.h / 2, BUILD_REACH)) { this.warn('Out of reach'); return; }
-      const have = g.player.inv.count(id);
-      if (!have) { this.warn('You have no ' + D.items[id].name); this.app.cursor = null; return; }
-      // Fuel goes in a handful at a time so one click doesn't empty your pockets.
-      const burner = D.protos[ent.p].burner && D.items[id].fuel;
-      const n = all ? have : burner ? Math.min(have, 5) : Math.min(have, D.items[id].stack);
-      const before = g.player.inv.count(id);
-      this.app.ui.transferToEntity(ent, id, n);
-      const moved = before - g.player.inv.count(id);
-      if (moved > 0) FG.emit('message', 'Inserted ' + moved + ' ' + D.items[id].name.toLowerCase(), 'info');
-      if (!g.player.inv.count(id)) this.app.cursor = null;
+      if (!g.player.inv.count(id)) { this.warn('You have no ' + D.items[id].name); this.app.cursor = null; return; }
+      this.app.act({ t: 'insEnt', e: ent.id, id, all: !!all });
     }
 
     // Ctrl+click: take what a machine has made. If it has made nothing, take its fuel instead,
     // so you can get coal back from any burner (or pull out wood to make room for coal).
-    quickTake(ent) {
-      const g = this.g, inv = g.player.inv;
-      const got = [];
-      let full = false;
-      const take = (id, n, remove) => {
-        const k = Math.min(n, inv.space(id));
-        if (k < n) full = true;
-        if (k <= 0) return;
-        remove(k);
-        inv.add(id, k);
-        got.push([id, k]);
-      };
-      for (const [id, n] of FG.outputsOf(g, ent)) take(id, n, (k) => FG.takeOutput(g, ent, id, k));
-      const tookProducts = got.length > 0;
-      if (!tookProducts && ent.fuel && ent.fuel.n > 0) {
-        const f = ent.fuel;
-        take(f.id, f.n, (k) => { f.n -= k; if (!f.n) ent.fuel = null; });
-      }
-      if (!got.length) { this.warn(full ? 'Inventory full' : 'Nothing to take'); return; }
-      const what = got.map(([id, k]) => k + ' ' + D.items[id].name.toLowerCase()).join(', ');
-      const more = tookProducts && ent.fuel && ent.fuel.n > 0 ? ' · Ctrl+click again for the ' + D.items[ent.fuel.id].name.toLowerCase() : '';
-      this.app.ui.toast('Took ' + what + more, 'info');
-      g.effects.push({ type: 'pick', id: got[0][0], x: ent.x + ent.w / 2, y: ent.y + ent.h / 2, t: 0, life: 40 });
-      FG.emit('sound', 'pickup');
-      FG.emit('inventory');
-    }
+    quickTake(ent) { this.app.act({ t: 'qtake', e: ent.id }); }
     // Ctrl+click a rail car: a wagon's cargo, or a locomotive's fuel.
-    quickTakeCar(hit) {
-      const g = this.g, inv = g.player.inv, car = hit.car;
-      let took = 0;
-      for (const s of car.inv.slots) {
-        if (!s) continue;
-        const k = Math.min(s.n, inv.space(s.id));
-        if (k <= 0) continue;
-        car.inv.remove(s.id, k);
-        inv.add(s.id, k);
-        took += k;
-      }
-      if (took) { this.app.ui.toast('Took ' + took + ' items from the ' + (car.type === 'loco' ? 'locomotive' : 'wagon'), 'info'); FG.emit('sound', 'pickup'); FG.emit('inventory'); }
-      else this.warn('Nothing to take');
-    }
+    quickTakeCar(hit) { this.app.act({ t: 'qtakeCar', car: hit.car.id }); }
 
     copySettings() {
       const hv = this.app.view.hover;
@@ -412,8 +347,7 @@
       if (!s) { this.warn('Shift+right-click a machine first to copy its settings'); return; }
       const pr = D.protos[e.p];
       if (s.recipe && pr.kind === 'crafter' && pr.cats.indexOf(D.recipes[s.recipe].cat) < 0) { this.warn('This machine cannot make that'); return; }
-      this.g.applySettings(e, s);
-      this.app.ui.toast('Settings pasted');
+      this.app.act({ t: 'paste', e: e.id, s });
     }
 
     // ---------------------------------------------------------- building
@@ -459,27 +393,27 @@
       return d;
     }
 
-    tryBuild(itemId, x, y, dir, ghost, settings) {
-      const g = this.g;
+    // Checks what it can locally, then asks for the build. Returns true if it asked.
+    tryBuild(itemId, x, y, dir, ghost, settings, turn) {
+      const g = this.g, app = this.app;
       const pr = D.protos[D.items[itemId].place];
       const [fw, fh] = FG.footprint(pr, pr.rotatable ? dir : 0);
-      if (!this.inReach(x + fw / 2, y + fh / 2, BUILD_REACH) && !ghost) { this.warn('Out of reach'); return null; }
+      if (!this.inReach(x + fw / 2, y + fh / 2, BUILD_REACH) && !ghost) { this.warn('Out of reach'); return false; }
       if (ghost || g.player.inv.count(itemId) < 1) {
-        if (!g.bonus.drones && !ghost) { this.warn('You have no ' + D.items[itemId].name); return null; }
-        if (!g.bonus.drones) return null;
-        const chk = FG.canPlace(g, pr.id, x, y, dir, { noReplace: true, ignorePlayer: true });
-        if (!chk.ok) return null;
-        return g.addGhost(pr.id, x, y, dir, settings);
+        if (!g.bonus.drones && !ghost) { this.warn('You have no ' + D.items[itemId].name); return false; }
+        if (!g.bonus.drones) return false;
+        if (!FG.canPlace(g, pr.id, x, y, dir, { noReplace: true, ignorePlayer: true }).ok) return false;
+      } else {
+        const chk = FG.canPlace(g, pr.id, x, y, dir);
+        if (!chk.ok) {
+          if (chk.reason && chk.reason !== 'Space is occupied') this.warn(chk.reason);
+          if (!turn) return false;
+        }
       }
-      const chk = FG.canPlace(g, pr.id, x, y, dir);
-      if (!chk.ok) {
-        if (chk.reason && chk.reason !== 'Space is occupied') this.warn(chk.reason);
-        return null;
-      }
-      const ent = g.build(itemId, x, y, dir, settings);
-      if (ent && pr.kind === 'underground' && ent.ug === 'out') this.app.dir = ent.dir;
-      if (!g.player.inv.count(itemId) && !g.bonus.drones) this.app.cursor = null;
-      return ent;
+      app.act({ t: 'build', item: itemId, x, y, dir, ghost: !!ghost, s: settings, turn }, (r) => {
+        if (r && pr.kind === 'underground' && r.ug === 'out') app.dir = r.dir;
+      });
+      return true;
     }
 
     dragBuild() {
@@ -494,8 +428,7 @@
         if (last) return;
         this.drag.last = [pv.x, pv.y];
         if (pv.loose) { this.warn('Place it beside a track'); return; }
-        const ent = this.tryBuild(c.item, pv.x, pv.y, 0, c.ghost, { rd: pv.rd });
-        if (ent) this.drag.placed.push(ent.id);
+        this.tryBuild(c.item, pv.x, pv.y, 0, c.ghost, { rd: pv.rd });
         return;
       }
       if (pr.kind === 'belt' && last) {
@@ -506,23 +439,19 @@
           const dx = pv.x - x, dy = pv.y - y;
           let d;
           if (Math.abs(dx) >= Math.abs(dy)) d = dx > 0 ? 1 : 3; else d = dy > 0 ? 2 : 0;
-          const prev = FG.entAt(this.g, x, y);
-          if (prev && this.drag.placed.indexOf(prev.id) >= 0 && prev.dir !== d && D.protos[prev.p].kind === 'belt') {
-            const res = FG.replaceEntity(this.g, prev, prev.p, d);
-            this.g.giveOrDrop(res.leftovers.filter((l) => l[0] !== D.protos[prev.p].item));
-            this.drag.placed.push(res.ent.id);
-          }
+          // Turn the belt this drag just laid behind us to follow the corner.
+          const pk = x + ',' + y;
+          const turn = this.drag.placed.has(pk) && this.drag.placed.get(pk) !== d ? [x, y, d] : undefined;
+          if (turn) this.drag.placed.set(pk, d);
           x += FG.DX[d]; y += FG.DY[d];
           app.dir = d;
-          const ent = this.tryBuild(c.item, x, y, d, c.ghost);
-          if (ent) this.drag.placed.push(ent.id);
+          if (this.tryBuild(c.item, x, y, d, c.ghost, undefined, turn)) this.drag.placed.set(x + ',' + y, d);
           if (!app.cursor) break;
         }
         this.drag.last = [pv.x, pv.y];
         return;
       }
-      const ent = this.tryBuild(c.item, pv.x, pv.y, pv.dir, c.ghost, pv.lm ? { lm: pv.lm } : undefined);
-      if (ent) this.drag.placed.push(ent.id);
+      if (this.tryBuild(c.item, pv.x, pv.y, pv.dir, c.ghost, pv.lm ? { lm: pv.lm } : undefined)) this.drag.placed.set(pv.x + ',' + pv.y, pv.dir);
       this.drag.last = [pv.x, pv.y];
     }
 
@@ -535,9 +464,7 @@
       const cost = FG.rails.itemCost(pc.t);
       if (g.player.inv.count('rail') < cost) { this.warn('You need ' + cost + ' rail' + (cost > 1 ? 's' : '') + ' for this piece'); return; }
       if (!this.inReach(m.wx, m.wy, RAIL_REACH)) { this.warn('Out of reach'); return; }
-      const n = g.buildGhostRun(pc, g.player.x, g.player.y, RAIL_REACH);
-      if (n) { FG.emit('sound', 'place'); if (n > 1) this.app.ui.toast('Laid ' + n + ' planned pieces', 'info'); }
-      else this.warn('Something is in the way');
+      this.app.act({ t: 'railRun', key: pc.key });
     }
     railStart() {
       const [x, y] = FG.rails.snapPoint(this.mouse.wx, this.mouse.wy);
@@ -573,26 +500,9 @@
       const plan = this.railPlanFor();
       this.railCache = null;
       if (!plan.reached) { this.warn('Track cannot reach there'); return; }
-      const ghostOnly = app.cursor && app.cursor.ghost;
-      let built = 0, ghosts = 0, used = 0, stop = null;
-      for (const pc of plan.pieces) {
-        if (g.rail.byKey.has(pc.key)) continue;
-        const cost = RL.itemCost(pc.t);
-        const reach = this.inReach((pc.ax + pc.bx) / 2, (pc.ay + pc.by) / 2, RAIL_REACH);
-        if (!ghostOnly && reach && g.player.inv.count('rail') >= cost) {
-          if (g.buildRail(pc.ax, pc.ay, pc.ah, pc.t)) { built++; used += cost; continue; }
-          stop = 'Something is in the way'; break;
-        }
-        // Out of reach or out of rails: leave the rest planned, to build later.
-        if (RL.addGhost(g, pc.ax, pc.ay, pc.ah, pc.t)) ghosts++;
-      }
-      if (built) FG.emit('sound', 'place');
-      const bits = [];
-      if (built) bits.push('laid ' + built + ' piece' + (built > 1 ? 's' : '') + ' (' + used + ' rails)');
-      if (ghosts) bits.push(ghosts + ' planned' + (g.bonus.drones ? ' for drones' : ': walk over and click them to build'));
-      if (bits.length > 0 && (built + ghosts > 1 || stop)) app.ui.toast(bits.join(' · ').replace(/^./, (ch) => ch.toUpperCase()), 'info');
-      if (stop) this.warn(stop);
-      if (!g.player.inv.count('rail') && !g.bonus.drones && !ghosts) app.cursor = null;
+      const ghostOnly = !!(app.cursor && app.cursor.ghost);
+      const pieces = plan.pieces.filter((pc) => !g.rail.byKey.has(pc.key)).map((pc) => [pc.ax, pc.ay, pc.ah, pc.t]);
+      if (pieces.length) app.act({ t: 'rails', pieces, ghostOnly });
     }
 
     // --------------------------------------------------------- blueprints
@@ -604,8 +514,6 @@
       for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
         const e = FG.entAt(g, x, y);
         if (e && !seen.has(e.id) && e.x >= x0 && e.y >= y0 && e.x + e.w - 1 <= x1 && e.y + e.h - 1 <= y1) { seen.add(e.id); inside.push(e); }
-        const gh = g.ghostAt(x, y);
-        if (gh && s.mode !== 'copy') g.removeGhost(gh);
       }
       const RL = FG.rails;
       const inArea = (x, y) => x >= x0 && x <= x1 + 1 && y >= y0 && y <= y1 + 1;
@@ -634,39 +542,7 @@
         if (railsIn.length) what.push(railsIn.length + ' pieces of track');
         app.ui.toast((s.mode === 'cut' ? 'Cut ' : 'Copied ') + what.join(' and ') + ' · click to paste, R to rotate', 'good');
       }
-      if (s.mode === 'cut' || s.mode === 'decon') {
-        let picked = 0, marked = 0, left = 0;
-        // Rail cars first, so the track under them can be picked up too.
-        for (const tr of g.rail.trains.slice()) {
-          for (let i = tr.cars.length - 1; i >= 0; i--) {
-            if (tr.dead) break;
-            const p = FG.trains.carPose(tr, i);
-            if (p.x < x0 || p.y < y0 || p.x > x1 + 1 || p.y > y1 + 1) continue;
-            if (this.inReach(p.x, p.y, BUILD_REACH) && g.pickUpCar({ train: tr, car: tr.cars[i], index: i })) picked++;
-            else left++;
-          }
-        }
-        for (const e of inside) {
-          if (this.inReach(e.x + e.w / 2, e.y + e.h / 2, BUILD_REACH) && g.pickUpEntity(e)) picked++;
-          else if (g.bonus.drones) { e.decon = true; marked++; }
-          else left++;
-        }
-        const railsOut = s.mode === 'cut' ? railsIn : Array.from(g.rail.pieces.values()).filter((pc) => inArea((pc.ax + pc.bx) / 2, (pc.ay + pc.by) / 2));
-        let busy = 0;
-        for (const pc of railsOut) {
-          if (FG.trains.pieceUnderTrain(g, pc)) { busy++; continue; }
-          if (this.inReach((pc.ax + pc.bx) / 2, (pc.ay + pc.by) / 2, RAIL_REACH) && g.pickUpRail(pc)) picked++;
-          else if (g.bonus.drones) { pc.decon = true; marked++; }
-          else left++;
-        }
-        RL.removeGhostsIn(g, x0, y0, x1 + 1, y1 + 1);
-        const bits = [];
-        if (picked) bits.push('picked up ' + picked);
-        if (marked) bits.push('drones will remove ' + marked);
-        if (left) bits.push(left + ' out of reach');
-        if (busy) bits.push(busy + ' track under a train');
-        if (bits.length) app.ui.toast(bits.join(' · ').replace(/^./, (c) => c.toUpperCase()), left ? 'warn' : 'info');
-      }
+      if (s.mode === 'cut' || s.mode === 'decon') app.act({ t: 'area', mode: s.mode, x0, y0, x1, y1 });
     }
 
     blueprintAnchor(bp) {
@@ -675,34 +551,8 @@
     }
 
     pasteBlueprint(bp) {
-      const g = this.g;
       const [ax, ay] = this.blueprintAnchor(bp);
-      let built = 0, ghosts = 0, skipped = 0;
-      const RL = FG.rails;
-      for (const [dx, dy, ah, t] of bp.rails || []) {
-        const x = ax + dx, y = ay + dy;
-        if (g.rail.byKey.has(RL.pieceKeyOf(x, y, ah, t))) continue;
-        const pc = RL.makePiece(x, y, ah, t);
-        if (!RL.pieceClear(g, pc)) { skipped++; continue; }
-        if (g.player.inv.count('rail') >= RL.itemCost(t) && this.inReach((pc.ax + pc.bx) / 2, (pc.ay + pc.by) / 2, RAIL_REACH)) {
-          if (g.buildRail(x, y, ah, t)) built++; else skipped++;
-        } else if (RL.addGhost(g, x, y, ah, t)) ghosts++;
-      }
-      for (const b of bp.ents) {
-        const x = ax + b.dx, y = ay + b.dy;
-        const pr = D.protos[b.p];
-        const chk = FG.canPlace(g, b.p, x, y, b.dir, { noReplace: true });
-        if (!chk.ok) { skipped++; continue; }
-        const [fw, fh] = FG.footprint(pr, b.dir);
-        if (g.player.inv.count(pr.item) > 0 && this.inReach(x + fw / 2, y + fh / 2, BUILD_REACH)) {
-          if (g.build(pr.item, x, y, b.dir, b.settings)) built++;
-        } else if (g.addGhost(b.p, x, y, b.dir, b.settings)) ghosts++;
-      }
-      const bits = [];
-      if (built) bits.push('built ' + built);
-      if (ghosts) bits.push(ghosts + ' ghosts' + (g.bonus.drones ? '' : ' (bring the items and click them)'));
-      if (skipped) bits.push(skipped + ' blocked');
-      if (bits.length) this.app.ui.toast(bits.join(' · ').replace(/^./, (c) => c.toUpperCase()));
+      this.app.act({ t: 'bp', bp: { ents: bp.ents, rails: bp.rails || [] }, ax, ay });
     }
 
     // ------------------------------------------------------ per-frame update
@@ -737,7 +587,9 @@
       view.railPlan = null;
       view.outOfReach = false;
       view.reach = BUILD_REACH;
-      const c = app.cursor;
+      let c = app.cursor;
+      // Let go of an item once the last one is used (drones can still plan ghosts of it).
+      if (c && c.item && !c.ghost && !g.player.inv.count(c.item) && !(g.bonus.drones && D.items[c.item].place)) { app.cursor = c = null; }
       view.held = c && c.item ? c.item : g.enemies.playerGun();
       if (m.over && c && c.bp && !view.select) {
         const [ax, ay] = this.blueprintAnchor(c.bp);
@@ -782,17 +634,18 @@
       view.showPoleAreas = false;
     }
 
-    // Called every simulation tick: translate held keys into game input.
+    // Called every simulation tick (every frame in multiplayer): turn held keys and buttons
+    // into the player's input.
     tick() {
       const app = this.app, g = this.g;
       if (!g) return;
       const k = this.keys;
-      const inp = g.input;
-      inp.mx = (k.has('KeyD') || k.has('ArrowRight') ? 1 : 0) - (k.has('KeyA') || k.has('ArrowLeft') ? 1 : 0);
-      inp.my = (k.has('KeyS') || k.has('ArrowDown') ? 1 : 0) - (k.has('KeyW') || k.has('ArrowUp') ? 1 : 0);
-      inp.shoot = k.has('Space');
-      inp.aimX = this.mouse.wx; inp.aimY = this.mouse.wy;
-      inp.mine = null;
+      const inp = { t: 'in', mx: 0, my: 0, sh: false, ax: this.mouse.wx, ay: this.mouse.wy, mine: null, rep: 0 };
+      if (!app.chatOpen) {
+        inp.mx = (k.has('KeyD') || k.has('ArrowRight') ? 1 : 0) - (k.has('KeyA') || k.has('ArrowLeft') ? 1 : 0);
+        inp.my = (k.has('KeyS') || k.has('ArrowDown') ? 1 : 0) - (k.has('KeyW') || k.has('ArrowUp') ? 1 : 0);
+        inp.sh = k.has('Space');
+      }
       app.view.mineTarget = null;
       if (k.has('KeyZ')) this.dropOne(false);
       else if (this.zDone.size) this.zDone.clear();
@@ -814,7 +667,7 @@
         } else if (hv.rail) {
           const pc = hv.rail.pc;
           if (this.inReach(m.wx, m.wy, BUILD_REACH)) {
-            inp.mine = { kind: 'rail', pc, key: 'p' + pc.id };
+            inp.mine = { kind: 'rail', id: pc.id, key: 'p' + pc.id };
             app.view.mineTarget = { cx: m.wx, cy: m.wy };
           } else this.warn('Out of reach');
         } else if (hv.res) {
@@ -830,14 +683,9 @@
       const c = app.cursor;
       if (m.left && c && c.item === 'repair_pack' && hv && hv.ent) {
         const e = hv.ent, pr = D.protos[e.p];
-        if (e.hp < pr.hp && this.inReach(e.x + e.w / 2, e.y + e.h / 2, BUILD_REACH)) {
-          if (this.repairPool <= 0) {
-            if (g.player.inv.remove('repair_pack', 1)) { this.repairPool = D.items.repair_pack.repair; g.stats.consume('repair_pack', 1); }
-          }
-          if (this.repairPool > 0) { const k = Math.min(2, pr.hp - e.hp, this.repairPool); e.hp += k; this.repairPool -= k; }
-          if (!g.player.inv.count('repair_pack') && this.repairPool <= 0) app.cursor = null;
-        }
+        if (e.hp < pr.hp && this.inReach(e.x + e.w / 2, e.y + e.h / 2, BUILD_REACH)) inp.rep = e.id;
       }
+      app.setInput(inp);
     }
   }
 
