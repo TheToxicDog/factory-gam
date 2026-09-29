@@ -248,7 +248,7 @@
       this.drawTrains(g, wx0, wy0, wx1, wy1, view);
       this.drawGhosts(g, wx0, wy0, wx1, wy1);
       this.drawEnemies(g, wx0, wy0, wx1, wy1);
-      this.drawPlayer(g);
+      this.drawPlayer(g, view);
       this.drawWires(g, objects);
       this.drawEffects(g);
       this.drawNight(g, objects);
@@ -703,32 +703,33 @@
       }
     }
 
-    drawPlayer(g) {
+    drawPlayer(g, view) {
       const p = g.player;
       if (p.dead) return;
       const ctx = this.ctx, T = this.T;
       const [sx, sy] = this.toScreen(p.x, p.y);
-      const bob = Math.sin(p.walk * 0.35) * T * 0.04;
+      const bob = Math.sin(p.walk * 0.35) * T * 0.03;
       ctx.fillStyle = 'rgba(0,0,0,0.35)';
       ctx.beginPath(); ctx.ellipse(sx + T * 0.06, sy + T * 0.3, T * 0.34, T * 0.16, 0, 0, Math.PI * 2); ctx.fill();
-      const ang = [-Math.PI / 2, 0, Math.PI / 2, Math.PI][p.facing];
-      ctx.save(); ctx.translate(sx, sy - T * 0.25 + bob); ctx.rotate(ang + Math.PI / 2);
-      // legs
-      const sw = Math.sin(p.walk * 0.35) * T * 0.12;
-      ctx.fillStyle = '#3a3a3a';
-      ctx.fillRect(-T * 0.16, T * 0.05 + sw, T * 0.12, T * 0.22);
-      ctx.fillRect(T * 0.04, T * 0.05 - sw, T * 0.12, T * 0.22);
-      // backpack
-      ctx.fillStyle = '#5a5f66';
-      S.rr(ctx, -T * 0.2, T * 0.02, T * 0.4, T * 0.22, T * 0.05); ctx.fill();
-      // body
-      ctx.fillStyle = '#e07a2a';
-      S.rr(ctx, -T * 0.24, -T * 0.2, T * 0.48, T * 0.34, T * 0.12); ctx.fill();
-      ctx.strokeStyle = '#6a3410'; ctx.lineWidth = Math.max(1, T * 0.03); ctx.stroke();
-      // helmet
-      circle(ctx, 0, -T * 0.16, T * 0.16, '#e8e2d4', '#5a5448', Math.max(1, T * 0.03));
+      // Face the mouse.
+      const ang = Math.atan2(g.input.aimY - p.y, g.input.aimX - p.x);
+      const lw = Math.max(1, T * 0.03), r = T * 0.3;
+      ctx.save(); ctx.translate(sx, sy - T * 0.25 + bob); ctx.rotate(ang);
+      // body: a plain circle, with a visor marking the front
+      circle(ctx, 0, 0, r, '#e07a2a', '#6a3410', lw);
       ctx.fillStyle = '#2a4a6a';
-      ctx.fillRect(-T * 0.1, -T * 0.3, T * 0.2, T * 0.08);
+      S.rr(ctx, r * 0.35, -r * 0.4, r * 0.4, r * 0.8, r * 0.15); ctx.fill();
+      // hands reach forward; the held item sits between them
+      const reach = r + T * 0.16, hr = T * 0.09;
+      const held = view && view.held ? FG.icons.get(view.held) : null;
+      if (held) {
+        const s = T * 0.5;
+        ctx.save(); ctx.translate(reach + s * 0.2, 0);
+        ctx.drawImage(held, -s / 2, -s / 2, s, s);
+        ctx.restore();
+      }
+      circle(ctx, reach, -T * 0.16, hr, '#e8c9a0', '#6a4a2a', lw);
+      circle(ctx, reach, T * 0.16, hr, '#e8c9a0', '#6a4a2a', lw);
       ctx.restore();
       if (p.hp < p.maxHp) {
         const f = p.hp / p.maxHp;

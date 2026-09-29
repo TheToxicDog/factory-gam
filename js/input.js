@@ -738,6 +738,7 @@
       view.outOfReach = false;
       view.reach = BUILD_REACH;
       const c = app.cursor;
+      view.held = c && c.item ? c.item : g.enemies.playerGun();
       if (m.over && c && c.bp && !view.select) {
         const [ax, ay] = this.blueprintAnchor(c.bp);
         view.build = {
