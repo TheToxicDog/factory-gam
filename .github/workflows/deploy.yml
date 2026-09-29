@@ -41,11 +41,15 @@ jobs:
           cat > params.json <<JSON
           {"commands": [
             "set -e",
+            "export HOME=/root",
+            "exec 2>&1",
             "PORT=\$(ss -ltnpH 2>/dev/null | grep -E 'tuff|node' | head -1 | sed -E 's/.*:([0-9]+) .*/\\\\1/')",
             "PORT=\${PORT:-80}",
+            "rm -rf $APP_DIR.new",
+            "git clone --depth 1 --branch $BRANCH $REPO_URL $APP_DIR.new",
             "systemctl stop tuff-game.service || true",
             "rm -rf $APP_DIR",
-            "git clone --depth 1 --branch $BRANCH $REPO_URL $APP_DIR",
+            "mv $APP_DIR.new $APP_DIR",
             "id tuff >/dev/null 2>&1 || useradd --system --no-create-home tuff",
             "chown -R tuff:tuff $APP_DIR",
             "printf '[Unit]\\\\nDescription=Cogworks Frontier\\\\nAfter=network.target\\\\n\\\\n[Service]\\\\nUser=tuff\\\\nWorkingDirectory=$APP_DIR\\\\nExecStart=/usr/bin/python3 -m http.server '\$PORT' --directory $APP_DIR\\\\nRestart=always\\\\nAmbientCapabilities=CAP_NET_BIND_SERVICE\\\\n\\\\n[Install]\\\\nWantedBy=multi-user.target\\\\n' > /etc/systemd/system/tuff-game.service",
@@ -68,7 +72,8 @@ jobs:
             --command-id "$COMMAND_ID" --instance-id "$INSTANCE_ID" || true
 
           aws ssm get-command-invocation \
-            --command-id "$COMMAND_ID" --instance-id "$INSTANCE_ID" --output text
+            --command-id "$COMMAND_ID" --instance-id "$INSTANCE_ID" \
+            --query '{Status:Status,Out:StandardOutputContent,Err:StandardErrorContent}' --output json
 
           STATUS=$(aws ssm get-command-invocation \
             --command-id "$COMMAND_ID" --instance-id "$INSTANCE_ID" \
