@@ -10,7 +10,6 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  INSTANCE_ID: i-0cbdb215d5b8ab095
   BRANCH: claude/loving-thompson-7yjuky
   REPO_URL: https://github.com/TheToxicDog/factory-gam.git
   APP_DIR: /opt/tuff-game
@@ -31,12 +30,24 @@ jobs:
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-east-1
+          aws-region: us-east-2
+
+      # Instance IDs are per-region, so find the (single) online SSM-managed instance in us-east-2.
+      - name: Find target instance
+        run: |
+          IDS=$(aws ssm describe-instance-information \
+            --filters Key=PingStatus,Values=Online \
+            --query 'InstanceInformationList[].InstanceId' --output text)
+          echo "Online SSM instances: $IDS"
+          if [ "$(echo $IDS | wc -w)" != "1" ]; then
+            echo "Expected exactly one online instance in us-east-2; set INSTANCE_ID explicitly."; exit 1
+          fi
+          echo "INSTANCE_ID=$IDS" >> "$GITHUB_ENV"
 
       - name: Show deploy target
         run: |
           aws sts get-caller-identity --query '{Account:Account,Arn:Arn}' --output json
-          aws ec2 describe-instances --region us-east-1 --instance-ids "$INSTANCE_ID" \
+          aws ec2 describe-instances --instance-ids "$INSTANCE_ID" \
             --query 'Reservations[].Instances[].{State:State.Name,AZ:Placement.AvailabilityZone,Type:InstanceType,PublicIp:PublicIpAddress,Name:Tags[?Key==`Name`]|[0].Value}' --output json || echo "ec2:DescribeInstances not permitted"
           aws ssm describe-instance-information --query 'InstanceInformationList[].{Id:InstanceId,Ping:PingStatus,Name:ComputerName,Ip:IPAddress}' --output json || true
 
