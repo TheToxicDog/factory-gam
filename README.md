@@ -12,6 +12,14 @@ It uses no frameworks, has no build step and needs no assets. All art is drawn p
 
 A keyboard and mouse are required.
 
+**Multiplayer:** click *Multiplayer* on the title screen (or in the Esc menu while playing).
+
+- **Host** a new world, the Demo factory or one of your saves. You can also open the world you are playing to others.
+- **Join:** friends who have the same page open see your world listed and click *Join*. On claude.ai this uses the artifact's shared room, which admits signed-in people the artifact is shared with (not visitors by public link).
+- **Connection:** once the players have found each other, game traffic goes directly between the two browsers over WebRTC, so on one network it stays on that network. If a direct connection can't be made, it is relayed through the room instead.
+- **Without the room** (the page opened from a file, or by a public link): the joiner makes a join code, the host turns it into an answer code, and the joiner pastes that back.
+- **Playing together:** everyone plays the same world at once, each with their own inventory, crafting and name tag. Up to 8 players; press ` to chat. The host's saves keep everyone's things for when they come back. If the host leaves, the others keep playing their own copy.
+
 **Demo factory:** the title screen's *Demo factory* button starts a ready-made mid-game base on seed 2024, built on the map's real terrain. It has:
 
 - steam power by the lake;
@@ -99,6 +107,8 @@ js/rails.js       rail geometry (2-tile grid, curves), track network, planner, s
 js/trains.js      trains: cars, reservations, signals, pathfinding, schedules, driving
 js/sim.js         game state, research, hand crafting, player, drones, fixed-rate tick
 js/save.js        save / load / save codes
+js/commands.js    every player action as a command (run at once alone, in lockstep in multiplayer)
+js/net.js         multiplayer sessions: host and client lockstep, snapshots, desync repair
 js/demo.js        the Demo factory scenario
 js/sprites.js     procedural building art (cached per direction)
 js/icons.js       procedural item icons
@@ -106,20 +116,35 @@ js/render.js      world renderer (terrain chunk cache, belts, entities, lighting
 js/ui.js          HUD and windows
 js/input.js       keyboard and mouse, building, blueprints
 js/main.js        boot, title screen, main loop, autosave
+js/netlink.js     multiplayer connections: room lobby, WebRTC, room relay, join codes
+js/mp.js          multiplayer window, players list, chat
 tools/build.mjs   bundles everything into dist/cogworks.html
 tests/            headless simulation tests and browser scripts
 ```
 
-The simulation runs at a fixed 60 ticks per second, separate from rendering. It is deterministic apart from enemy spawning, and doesn't touch the DOM, so the tests run it headless in Node.
+The simulation runs at a fixed 60 ticks per second, separate from rendering. It is fully deterministic (even enemies roll dice from the world's own seeded generator) and doesn't touch the DOM, so the tests run it headless in Node.
+
+Multiplayer works like Factorio's lockstep:
+- Every player's computer runs the whole simulation.
+- Everything a player does is a small command. The host puts the commands in order, gives each one the tick it runs on, and streams them out. Clients only simulate ticks the host has confirmed.
+- When someone joins, the host adds them and saves the world, and every computer, the host included, reloads that same snapshot.
+- Every two seconds each computer fingerprints its world. A client that differs from the host gets a fresh snapshot.
 
 ## Tests
 
 ```
 node tests/sim.test.js   # data integrity + simulation behaviour (belts, power, oil, combat, railways, saves…)
+node tests/net.test.js   # multiplayer lockstep: joins, leaves, commands, desync repair, a minute of the Demo factory
 node tests/perf.js       # ~14,000-entity factory: ms per tick and topology rebuild cost
 ```
 
-The browser scripts (`tests/smoke.cjs`, `tests/play.cjs`, `tests/trains.cjs`, `tests/tour.cjs`, `tests/showcase.cjs` and others) drive the real page with Playwright. `tests/tour.cjs` walks through the Demo factory with real clicks and takes about 40 screenshots of the buildings and every window. `tests/loaders.cjs` builds loaders by hand: chest to belt to chest, a furnace fed and emptied, every tier, and a wagon. They mine, build, fuel, drag belts, configure assemblers, save and load, and take screenshots.
+The browser scripts (`tests/smoke.cjs`, `tests/play.cjs`, `tests/trains.cjs`, `tests/tour.cjs`, `tests/showcase.cjs` and others) drive the real page with Playwright. `tests/tour.cjs` walks through the Demo factory with real clicks and takes about 40 screenshots of the buildings and every window. `tests/loaders.cjs` builds loaders by hand: chest to belt to chest, a furnace fed and emptied, every tier, and a wagon. `tests/multiplayer.cjs` plays three players in one browser, using a stand-in for the claude.ai room (`tests/fake-room.js`):
+- one hosts;
+- one joins over WebRTC;
+- one without WebRTC joins through the relay;
+- they walk, build and chat, and their worlds are compared tick for tick.
+
+`tests/mpcodes.cjs` joins with codes and no room. `tests/mplobby.cjs` joins through a room that refuses separate game rooms. They mine, build, fuel, drag belts, configure assemblers, save and load, and take screenshots.
 
 ## Not in this version yet
 

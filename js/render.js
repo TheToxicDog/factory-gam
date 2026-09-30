@@ -703,8 +703,12 @@
       }
     }
 
+    // Every player, each in their own colour; with company, names over their heads.
     drawPlayer(g) {
-      const p = g.player;
+      for (const p of g.players) if (p !== g.local) this.drawOnePlayer(p, true);
+      if (g.local) this.drawOnePlayer(g.local, g.players.length > 1);
+    }
+    drawOnePlayer(p, tag) {
       if (p.dead) return;
       const ctx = this.ctx, T = this.T;
       const [sx, sy] = this.toScreen(p.x, p.y);
@@ -722,9 +726,9 @@
       ctx.fillStyle = '#5a5f66';
       S.rr(ctx, -T * 0.2, T * 0.02, T * 0.4, T * 0.22, T * 0.05); ctx.fill();
       // body
-      ctx.fillStyle = '#e07a2a';
+      ctx.fillStyle = p.color || '#e07a2a';
       S.rr(ctx, -T * 0.24, -T * 0.2, T * 0.48, T * 0.34, T * 0.12); ctx.fill();
-      ctx.strokeStyle = '#6a3410'; ctx.lineWidth = Math.max(1, T * 0.03); ctx.stroke();
+      ctx.strokeStyle = 'rgba(0,0,0,0.55)'; ctx.lineWidth = Math.max(1, T * 0.03); ctx.stroke();
       // helmet
       circle(ctx, 0, -T * 0.16, T * 0.16, '#e8e2d4', '#5a5448', Math.max(1, T * 0.03));
       ctx.fillStyle = '#2a4a6a';
@@ -734,6 +738,17 @@
         const f = p.hp / p.maxHp;
         ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(sx - T * 0.35, sy - T * 0.8, T * 0.7, T * 0.08);
         ctx.fillStyle = f > 0.5 ? '#7ac05a' : '#e0553f'; ctx.fillRect(sx - T * 0.35, sy - T * 0.8, T * 0.7 * f, T * 0.08);
+      }
+      if (tag && p.name) {
+        ctx.font = '600 ' + Math.round(FG.clamp(T * 0.34, 11, 15)) + 'px "Barlow Semi Condensed", sans-serif';
+        ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+        const w = ctx.measureText(p.name).width + 10, ty = sy - T * (p.hp < p.maxHp ? 0.86 : 0.72);
+        ctx.fillStyle = 'rgba(20,18,16,0.72)';
+        ctx.fillRect(sx - w / 2, ty - 16, w, 16);
+        ctx.fillStyle = p.color || '#f0a830';
+        ctx.fillRect(sx - w / 2, ty - 2, w, 2);
+        ctx.fillStyle = '#efe6d6';
+        ctx.fillText(p.name, sx, ty - 2);
       }
     }
 
@@ -820,7 +835,7 @@
         dc.fillStyle = gr;
         dc.beginPath(); dc.arc(x, y, r * T, 0, Math.PI * 2); dc.fill();
       };
-      if (!g.player.dead) hole(g.player.x, g.player.y, 9, 0.9);
+      for (const p of g.players) if (!p.dead) hole(p.x, p.y, 9, 0.9);
       for (const tr of g.rail.trains) tr.cars.forEach((c, i) => {
         if (c.type !== 'loco') return;
         const p = FG.trains.carPose(tr, i);
@@ -1172,11 +1187,13 @@
       const [sx, sy] = toM(p.x, p.y);
       ctx.fillRect(sx - Math.max(1.5, scale), sy - Math.max(1.5, scale), Math.max(3, scale * 2), Math.max(3, scale * 2));
     }
-    // Player
-    const [px, py] = toM(g.player.x, g.player.y);
-    ctx.fillStyle = '#f0a830';
+    // Players (you last, on top, in amber)
     ctx.strokeStyle = '#1a1714';
-    ctx.beginPath(); ctx.arc(px, py, Math.max(3, scale * 1.5), 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    for (const p of g.players.filter((q) => q !== g.local).concat([g.local || g.player])) {
+      const [px, py] = toM(p.x, p.y);
+      ctx.fillStyle = p === (g.local || g.player) ? '#f0a830' : p.color || '#58a6d8';
+      ctx.beginPath(); ctx.arc(px, py, Math.max(3, scale * 1.5), 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    }
     if (opts.viewRect) {
       const [ax, ay] = toM(opts.viewRect[0], opts.viewRect[1]);
       const [bx, by] = toM(opts.viewRect[2], opts.viewRect[3]);

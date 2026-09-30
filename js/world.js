@@ -13,6 +13,7 @@
   FG.RES_ITEM = RES_ITEM;
   FG.RES_NAME = RES_NAME;
 
+  const PRISTINE = new Map(); // "seed:size:richness" -> freshly generated terrain
   class World {
     constructor(seed, size, opts) {
       opts = opts || {};
@@ -34,8 +35,30 @@
       this.spawnX = size >> 1;
       this.spawnY = size >> 1;
       this.nestSpots = [];
-      this.generate(opts);
+      // Terrain depends only on seed, size and richness. Reloading a world (a multiplayer join
+      // reloads it on every computer) copies the last generated terrain instead of redoing it.
+      const key = this.seed + ':' + size + ':' + this.richness;
+      const hit = PRISTINE.get(key);
+      if (hit) this.copyFrom(hit);
+      else {
+        this.generate(opts);
+        PRISTINE.set(key, this.pristineCopy());
+        if (PRISTINE.size > 2) PRISTINE.delete(PRISTINE.keys().next().value);
+      }
       this.modified = new Set(); // tiles whose resource changed since generation (for saves)
+    }
+    pristineCopy() {
+      return {
+        terrain: this.terrain.slice(), res: this.res.slice(), amt: this.amt.slice(), variant: this.variant.slice(),
+        charted: this.charted.slice(), pollution: this.pollution.slice(), spawnX: this.spawnX, spawnY: this.spawnY,
+        nestSpots: this.nestSpots.map((s) => s.slice()),
+      };
+    }
+    copyFrom(c) {
+      this.terrain.set(c.terrain); this.res.set(c.res); this.amt.set(c.amt); this.variant.set(c.variant);
+      this.charted.set(c.charted); this.pollution.set(c.pollution);
+      this.spawnX = c.spawnX; this.spawnY = c.spawnY;
+      this.nestSpots = c.nestSpots.map((s) => s.slice());
     }
 
     idx(x, y) { return y * this.W + x; }

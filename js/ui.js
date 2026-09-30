@@ -309,6 +309,7 @@
       const g = this.g, app = this.app;
       if (!g) return;
       this.updateObjective(false);
+      if (this.updatePlayers) this.updatePlayers(false);
       // research card
       const r = g.research;
       const rc = this.$('hud-research');
@@ -1413,6 +1414,7 @@
         b('Save game', () => this.open('saves', 'save')),
         b('Load game', () => this.open('saves', 'load')),
         b('Copy or import a save code', () => this.open('savecode')),
+        b(app.net ? (app.net.role === 'host' ? 'Multiplayer: hosting' : 'Multiplayer: joined') : 'Multiplayer', () => this.open('multiplayer')),
         b('Controls and tips', () => this.open('help')),
         b(FG.sfx.enabled() ? 'Sound: on' : 'Sound: off', (ev) => { FG.sfx.setEnabled(!FG.sfx.enabled()); ev.target.textContent = FG.sfx.enabled() ? 'Sound: on' : 'Sound: off'; }),
         b('New game', () => this.open('newgame')),
@@ -1502,7 +1504,7 @@
         ['Rotate', 'R  (Shift+R back)'], ['Clear hand / copy building', 'Q'], ['Inventory & crafting', 'E'], ['Research', 'T'],
         ['Production stats', 'P'], ['Map', 'M'], ['Detail overlay', 'Alt'], ['Pollution overlay', 'F'],
         ['Hotbar', '1 – 0'], ['Put one held item into a machine', 'Z (hold and sweep for more)'], ['Split a stack', 'Right-click it in the inventory'], ['Take products (then fuel)', 'Ctrl+click'], ['Copy / paste settings', 'Shift+R-click / Shift+click'], ['Shoot nearest enemy', 'Hold Space'],
-        ['Throw grenade', 'G'], ['Copy area as blueprint', 'Ctrl+C then drag'], ['Cut area', 'Ctrl+X then drag'], ['Paste blueprint', 'Ctrl+V'],
+        ['Throw grenade', 'G'], ['Chat (multiplayer)', '`'], ['Copy area as blueprint', 'Ctrl+C then drag'], ['Cut area', 'Ctrl+X then drag'], ['Paste blueprint', 'Ctrl+V'],
         ['Remove area', 'X then drag'], ['Board or leave a train', 'Enter'], ['Drive a train', 'W / S, A / D at junctions'], ['Zoom', 'Mouse wheel'], ['Pause menu', 'Esc'], ['Show all pole coverage', 'Shift (holding a pole)'],
       ];
       w.body.append(h('div', { class: 'help-grid' }, keys.map(([a, k]) => h('div', null, h('span', { text: a }), h('kbd', { text: k })))),
@@ -1510,6 +1512,7 @@
           h('li', { text: 'Burner drills drop ore into whatever is in front of them. A drill facing a stone furnace is a complete mine-and-smelt line.' }),
           h('li', { text: 'Arms (inserters) move items from behind them to the tile in front, and only take what the target needs.' }),
           h('li', { text: 'Belts have two lanes. Arms put items on the far lane and pick up from either lane; drills drop ore on the lane nearest them; a belt feeding into the side of another fills one lane.' }),
+          h('li', { text: 'Multiplayer: click Multiplayer on the title screen (or in the Esc menu) and host a world; friends who have this page open see it listed and join. Everyone plays the same world at once, each with their own inventory; the host’s saves keep everyone’s things for next time.' }),
           h('li', { text: 'Loaders (Logistics research) move a whole belt of items into or out of a chest, machine or stopped wagon. The arrow shows the way items go: point it at a chest to fill it, away from one to empty it. R swaps loading and unloading.' }),
           h('li', { text: 'Power: water pump on a shore → boiler (fuel it) → steam engines. Poles connect machines inside their blue area.' }),
           h('li', { text: 'Machines show a badge when stuck: lightning for power, … for missing ingredients, ▲ for a full output.' }),

@@ -113,6 +113,7 @@
           app.act('grenade', { x: this.mouse.wx, y: this.mouse.wy });
           break;
         case 'Space': e.preventDefault(); break;
+        case 'Backquote': e.preventDefault(); ui.openChat(); break;
         default:
           if (/^Digit[0-9]$/.test(code)) {
             const n = parseInt(code.slice(5), 10);
@@ -677,7 +678,7 @@
         } else if (hv.rail) {
           const pc = hv.rail.pc;
           if (this.inReach(m.wx, m.wy, BUILD_REACH)) {
-            w.mine = { kind: 'rail', pid: pc.id, key: 'p' + pc.id };
+            w.mine = { kind: 'rail', rk: pc.key, key: 'p' + pc.key };
             app.view.mineTarget = { cx: m.wx, cy: m.wy };
           } else this.warn('Out of reach');
         } else if (hv.res) {

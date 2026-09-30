@@ -421,3 +421,29 @@ canvas:focus { outline: none; }
   color: var(--text); font-size: 14px; font-weight: 600; pointer-events: none;
 }
 #focus-hint[hidden] { display: none; }
+
+/* ---------------------------------------------------------- multiplayer */
+#hud-players { padding: 7px 10px; font-size: 13px; min-width: 150px; cursor: pointer; }
+#hud-players .mp-row { display: flex; align-items: center; gap: 6px; margin-top: 3px; }
+.mp-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6); display: inline-block; }
+#win-multiplayer .body { min-width: min(820px, calc(100vw - 24px)); }
+.mp-pane { flex: 1 1 340px; min-width: min(340px, calc(100vw - 60px)); }
+.mp-pane .slots-list { min-width: 0; }
+.mp-game .meta b { font-size: 15px; }
+.mp-status { color: var(--warn); }
+.mp-codes { margin-top: 12px; color: var(--muted); }
+.mp-codes summary { cursor: pointer; font-weight: 600; }
+.mp-code-box { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; max-width: 560px; }
+.mp-code-box textarea { min-height: 70px; font-size: 11px; }
+.mp-code-box .btn { align-self: flex-start; }
+#chat-log {
+  position: absolute; left: 12px; bottom: 70px; width: min(420px, calc(100vw - 24px));
+  display: flex; flex-direction: column; gap: 3px; pointer-events: none;
+}
+.chat-line { padding: 4px 8px; background: rgba(20, 18, 15, 0.8); border-radius: 2px; font-size: 14px; transition: opacity 1.5s; }
+.chat-line.old { opacity: 0; }
+#chat-input {
+  position: absolute; left: 12px; bottom: 36px; width: min(420px, calc(100vw - 24px)); z-index: 3;
+  background: rgba(20, 18, 15, 0.95); border: 1px solid var(--amber); color: var(--text);
+  padding: 7px 10px; font: 15px var(--font-ui); border-radius: 2px; user-select: text;
+}

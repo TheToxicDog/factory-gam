@@ -78,7 +78,7 @@
   const DIRTY_FX = { beacon: 1, drill: 1, pumpjack: 1, furnace: 1, crafter: 1, lab: 1 };
 
   // Players: colours for name tags, and what everyone lands with.
-  const PLAYER_COLORS = ['#f0a830', '#58a6d8', '#7ac05a', '#d86ab8', '#e8e0c0', '#9a7ae0', '#e0553f', '#4ac0b0'];
+  const PLAYER_COLORS = ['#e07a2a', '#58a6d8', '#7ac05a', '#d86ab8', '#e8e0c0', '#9a7ae0', '#e0553f', '#4ac0b0'];
   const START_KIT = [['iron_plate', 8], ['wood', 4], ['burner_drill', 1], ['stone_furnace', 1], ['pistol', 1], ['ammo_basic', 10]];
   FG.PLAYER_COLORS = PLAYER_COLORS;
   const newInput = () => ({ mx: 0, my: 0, mine: null, shoot: false, aimX: 0, aimY: 0, repair: 0 });
@@ -475,7 +475,7 @@
       if (!p.mining || p.mining.key !== t.key) p.mining = { key: t.key, prog: 0 };
       if (t.kind === 'ent' && !this.ents.get(t.id)) { p.mining = null; return; }
       if (t.kind === 'car' && !FG.trains.findCar(this, t.id)) { p.mining = null; return; }
-      const pc = t.kind === 'rail' ? this.rail.pieces.get(t.pid) : null;
+      const pc = t.kind === 'rail' ? this.rail.byKey.get(t.rk) : null;
       if (t.kind === 'rail' && (!pc || pc.dead)) { p.mining = null; return; }
       p.mining.prog += 1 / this.mineTime(t);
       if (p.mining.prog < 1) return;

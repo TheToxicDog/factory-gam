@@ -41,7 +41,8 @@
 
   app.onWindowChange = function () {
     const w = app.ui.win;
-    app.paused = !!(w && (w.name === 'menu' || w.name === 'saves' || w.name === 'savecode' || w.name === 'newgame' || w.name === 'help' || w.name === 'victory'));
+    // A multiplayer world never pauses.
+    app.paused = !app.net && !!(w && (w.name === 'menu' || w.name === 'saves' || w.name === 'savecode' || w.name === 'newgame' || w.name === 'help' || w.name === 'victory'));
   };
 
   // Keep the hotbar stocked with placeable items the player picks up.
@@ -59,7 +60,10 @@
   FG.on('inventory', autoHotbar);
   app.autoHotbar = autoHotbar;
 
-  app.startGame = function (g) {
+  app.startGame = function (g, opts) {
+    // Starting or loading another world ends a multiplayer session (joining one doesn't).
+    if (app.net && !(opts && opts.keepNet)) app.mp.stop();
+    if (!app.net) for (const p of g.players.slice()) if (p !== g.local) g.removePlayer(p.id);
     if (app.game && app.game !== g) autosaveCurrent();
     app.game = g;
     app.demo = null;
@@ -86,6 +90,8 @@
 
   // Keep the running game safe before replacing it.
   function autosaveCurrent() {
+    // A guest's copy of someone else's world is not their autosave.
+    if (app.net && app.net.role === 'client') return null;
     if (app.game && !app.titleShown && app.game.tick > 60) return FG.save.store(app.game, 'auto').catch(() => {});
     return null;
   }
@@ -106,6 +112,7 @@
 
   app.showTitle = function () {
     const saving = autosaveCurrent();
+    if (app.net) app.mp.stop(true);
     app.titleShown = true;
     app.game = null;
     document.getElementById('hud').hidden = true;
@@ -129,6 +136,7 @@
       try { app.startGame(await FG.save.loadSlot('auto')); } catch (e) { app.ui.toast('Could not load the autosave: ' + e.message, 'bad'); }
     } }));
     menu.appendChild(h('button', { class: 'btn' + (hasAuto ? '' : ' primary'), text: 'New game', onclick: () => app.ui.open('newgame') }));
+    menu.appendChild(h('button', { class: 'btn', id: 'title-multiplayer', text: 'Multiplayer', title: 'Host a world or join one with friends who have this page open', onclick: () => app.ui.open('multiplayer') }));
     menu.appendChild(h('button', { class: 'btn', text: 'Demo factory', title: 'A ready-made base with steam power, miners, belts, smelting, science and a railway', onclick: () => app.startDemo() }));
     if (hasAny) menu.appendChild(h('button', { class: 'btn', text: 'Load game', onclick: () => app.ui.open('saves', 'load') }));
     menu.appendChild(h('button', { class: 'btn', text: 'Import save code', onclick: () => app.ui.open('savecode') }));
@@ -211,7 +219,8 @@
       } else if (app.game) {
         const g = app.game;
         app.input.frame();
-        if (!app.paused) {
+        if (app.net) app.net.update(dt);
+        else if (!app.paused) {
           acc += dt;
           let n = 0;
           while (acc >= STEP && n < 5) { app.input.tick(); g.step(); acc -= STEP; n++; }
@@ -222,7 +231,7 @@
         R.cam.y += (g.local.y - R.cam.y) * 0.25;
         R.draw(g, app.view);
         if (now - lastHud > 100) { lastHud = now; app.ui.updateHud(); }
-        if (g.tick - app.lastAutosave > AUTOSAVE_TICKS) {
+        if (g.tick - app.lastAutosave > AUTOSAVE_TICKS && !(app.net && app.net.role === 'client')) {
           app.lastAutosave = g.tick;
           FG.save.store(g, 'auto').catch(() => app.ui.toast('Autosave failed: browser storage is unavailable', 'warn'));
         }

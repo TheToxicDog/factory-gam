@@ -424,6 +424,11 @@
   C.research = (g, p, a) => { if (D.techs[a.t]) g.queueResearch(a.t, !!a.front); };
   C.researchCancel = (g, p, a) => { if (D.techs[a.t]) g.cancelResearch(a.t); };
   C.skipObjective = (g) => g.objectives.skip();
+  // Chat rides the command stream, so everyone sees a line at the same moment.
+  C.chat = (g, p, a) => {
+    const t = String(a.text || '').replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 160);
+    if (t) FG.emit('chat', p, t);
+  };
 
   // ------------------------------------------------------------ weapons
   C.grenade = (g, p, a) => {
