@@ -24,6 +24,16 @@
   app.input = new FG.Input(app);
   window.addEventListener('resize', () => app.renderer.resize());
 
+  // Every action on the world goes through here as a command (commands.js): run at once when
+  // playing alone, sent to the host in multiplayer (net.js).
+  app.act = function (t, a) {
+    const g = app.game;
+    if (!g || app.titleShown) return;
+    const cmd = { t, a: a || {} };
+    if (app.net) app.net.command(cmd);
+    else FG.runCmd(g, g.local.id, cmd);
+  };
+
   app.setCursor = function (id) {
     if (!id) { app.cursor = null; return; }
     app.cursor = { item: id };
@@ -37,7 +47,7 @@
   // Keep the hotbar stocked with placeable items the player picks up.
   function autoHotbar() {
     const g = app.game;
-    if (!g) return;
+    if (!g || !g.actingLocal) return;
     const t = g.player.inv.totals();
     for (const id of Object.keys(t).sort((a, b) => D.items[a].order - D.items[b].order)) {
       if (!(D.items[id].place || D.items[id].track) || app.hotbar.indexOf(id) >= 0) continue;
@@ -208,8 +218,8 @@
           if (n >= 5) acc = 0;
         } else acc = 0;
         // Camera follows the player smoothly.
-        R.cam.x += (g.player.x - R.cam.x) * 0.25;
-        R.cam.y += (g.player.y - R.cam.y) * 0.25;
+        R.cam.x += (g.local.x - R.cam.x) * 0.25;
+        R.cam.y += (g.local.y - R.cam.y) * 0.25;
         R.draw(g, app.view);
         if (now - lastHud > 100) { lastHud = now; app.ui.updateHud(); }
         if (g.tick - app.lastAutosave > AUTOSAVE_TICKS) {
@@ -224,11 +234,12 @@
     requestAnimationFrame(frame);
   }
 
-  FG.on('picked', (id, n, x, y) => { if (app.game) app.game.effects.push({ type: 'pick', id, x, y, t: 0, life: 40 }); });
+  // Pickups and sounds without a place belong to whoever acted: only theirs play here.
+  FG.on('picked', (id, n, x, y) => { if (app.game && app.game.actingLocal) app.game.effects.push({ type: 'pick', id, x, y, t: 0, life: 40 }); });
 
   // Sound effects (only for the live game, never the title-screen demo).
   const live = () => app.game && !app.titleShown;
-  FG.on('sound', (name, x, y) => { if (live()) FG.sfx.play(name, x, y); });
+  FG.on('sound', (name, x, y) => { if (live() && (x !== undefined || app.game.actingLocal)) FG.sfx.play(name, x, y); });
   FG.on('placed', (e) => { if (live()) FG.sfx.play('place', e.x, e.y); });
   FG.on('research', (tid) => { if (tid && live()) FG.sfx.play('research'); });
   FG.on('objective', () => { if (live()) FG.sfx.play('objective'); });

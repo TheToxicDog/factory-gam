@@ -77,6 +77,13 @@
   const DIRTY_FLUID = { pipe: 1, pipe_ug: 1, tank: 1, offshore: 1, boiler: 1, engine: 1, pumpjack: 1, crafter: 1 };
   const DIRTY_FX = { beacon: 1, drill: 1, pumpjack: 1, furnace: 1, crafter: 1, lab: 1 };
 
+  // Players: colours for name tags, and what everyone lands with.
+  const PLAYER_COLORS = ['#f0a830', '#58a6d8', '#7ac05a', '#d86ab8', '#e8e0c0', '#9a7ae0', '#e0553f', '#4ac0b0'];
+  const START_KIT = [['iron_plate', 8], ['wood', 4], ['burner_drill', 1], ['stone_furnace', 1], ['pistol', 1], ['ammo_basic', 10]];
+  FG.PLAYER_COLORS = PLAYER_COLORS;
+  const newInput = () => ({ mx: 0, my: 0, mine: null, shoot: false, aimX: 0, aimY: 0, repair: 0 });
+  FG.newInput = newInput;
+
   // --------------------------------------------------------------------- game
   class Game {
     constructor(opts) {
@@ -100,26 +107,75 @@
       this.nextGhost = 1;
       this.research = { done: {}, current: null, queue: [], progress: {} };
       this.unlocked = {};
-      this.bonus = { miningProd: 0, hand: 0, labSpeed: 0, bulletDmg: 0, fireRate: 0, laserDmg: 0, drones: 0 };
+      this.bonus = { miningProd: 0, hand: 0, labSpeed: 0, bulletDmg: 0, fireRate: 0, laserDmg: 0, drones: 0, inv: 0 };
       this.stats = new Stats();
       this.launches = 0;
       this.won = false;
       this.effects = []; // transient visual effects (render only)
-      this.input = { mx: 0, my: 0, mine: null, shoot: false, aimX: 0, aimY: 0 };
-      this.player = {
-        x: this.world.spawnX + 0.5, y: this.world.spawnY + 0.5,
-        inv: new FG.Inventory(60), hp: 250, maxHp: 250, lastHit: -9999,
-        queue: [], craftProg: 0, mining: null, facing: 2, walk: 0, gun: 'pistol', cd: 0, rounds: 0, dead: 0,
-      };
-      const inv = this.player.inv;
-      inv.add('iron_plate', 8);
-      inv.add('wood', 4);
-      inv.add('burner_drill', 1);
-      inv.add('stone_furnace', 1);
-      inv.add('pistol', 1);
-      inv.add('ammo_basic', 10);
+      // Every random choice the simulation makes comes from here (see FG.Rand).
+      this.rng = new FG.Rand((this.opts.seed ^ 0x2545f491) >>> 0);
+      // Everyone in the world. `local` is the one this computer controls; `player` is whoever
+      // is acting right now (the local player, except while the simulation runs someone
+      // else's turn or command). `offline` keeps players who left, for when they come back.
+      this.players = [];
+      this.offline = [];
+      this.local = this.player = this.addPlayer('p1', 'Engineer');
       this.enemies = new FG.Enemies(this);
       this.objectives = new FG.Objectives(this);
+    }
+
+    rand() { return this.rng.next(); }
+    // The acting player's input (movement, mining target, shooting...).
+    get input() { return this.player.input; }
+    // Is the player acting right now the one at this computer? (Messages and sounds that
+    // concern one player only play for them.)
+    get actingLocal() { return this.player === this.local; }
+
+    newPlayer(id, name, color) {
+      const p = {
+        isPlayer: true, id, name: name || 'Engineer', color: color || PLAYER_COLORS[this.players.length % PLAYER_COLORS.length],
+        x: this.world.spawnX + 0.5, y: this.world.spawnY + 0.5,
+        inv: new FG.Inventory(60 + this.bonus.inv), hp: 250, maxHp: 250, lastHit: -9999,
+        queue: [], craftProg: 0, mining: null, facing: 2, walk: 0, gun: 'pistol', cd: 0, rounds: 0, dead: 0,
+        input: newInput(), repairPool: 0,
+      };
+      for (const [item, n] of START_KIT) p.inv.add(item, n);
+      return p;
+    }
+    // Add a player to the world (or bring back one who left). Returns the player.
+    addPlayer(id, name, color) {
+      let p = this.players.find((q) => q.id === id);
+      if (p) return p;
+      const k = this.offline.findIndex((q) => q.id === id);
+      if (k >= 0) { p = this.offline.splice(k, 1)[0]; p.input = newInput(); p.mining = null; }
+      else {
+        p = this.newPlayer(id, name, color);
+        // Land next to whoever is here already.
+        const o = this.players[0];
+        if (o && !o.dead) { p.x = o.x + 1.5; p.y = o.y + 0.5; if (this.playerBlocked(p.x, p.y)) { p.x = o.x; p.y = o.y; } }
+      }
+      if (name) p.name = name;
+      if (color) p.color = color;
+      this.players.push(p);
+      return p;
+    }
+    // A player leaves: they step out of any train and are kept for when they return.
+    removePlayer(id) {
+      const k = this.players.findIndex((q) => q.id === id);
+      if (k < 0) return;
+      const p = this.players[k];
+      if (p.vehicle) this.withPlayer(p, () => FG.trains.exit(this));
+      p.mining = null;
+      this.players.splice(k, 1);
+      this.offline.push(p);
+      if (this.player === p) this.player = this.local;
+    }
+    playerById(id) { return this.players.find((q) => q.id === id) || null; }
+    // Run fn as player p (the acting player), then restore whoever was acting before.
+    withPlayer(p, fn) {
+      const cur = this.player;
+      this.player = p;
+      try { return fn(p); } finally { this.player = cur; }
     }
 
     // Flag the topology caches affected by a change to an entity of this kind.
@@ -154,7 +210,7 @@
       this.stats.pollution += amt;
     }
 
-    msg(text, kind) { FG.emit('message', text, kind || 'info'); }
+    msg(text, kind) { if (this.actingLocal) FG.emit('message', text, kind || 'info'); }
 
     // -------------------------------------------------------------- research
     techState(tid) {
@@ -210,11 +266,10 @@
     applyEffect(ef) {
       const b = this.bonus;
       switch (ef.type) {
-        case 'inv': {
-          const extra = this.player.inv.resize(this.player.inv.size + ef.v);
-          for (const [id, n] of extra) this.player.inv.add(id, n);
+        case 'inv':
+          b.inv += ef.v;
+          for (const p of this.players.concat(this.offline)) p.inv.resize(p.inv.size + ef.v);
           break;
-        }
         case 'hand': b.hand += ef.v; break;
         case 'lab_speed': b.labSpeed += ef.v; break;
         case 'mining_prod': b.miningProd += ef.v; break;
@@ -366,7 +421,7 @@
         p.vehicle = null;
       }
       let mx = inp.mx, my = inp.my;
-      const len = Math.hypot(mx, my);
+      const len = Math.sqrt(mx * mx + my * my);
       const speed = 0.15;
       if (len > 0) {
         mx = (mx / len) * speed; my = (my / len) * speed;
@@ -385,6 +440,20 @@
       if (this.tick - p.lastHit > 600 && p.hp < p.maxHp) p.hp = Math.min(p.maxHp, p.hp + 0.1);
       if (this.tick % 30 === 0) this.world.chart((p.x / FG.CHUNK) | 0, (p.y / FG.CHUNK) | 0, 2);
       this.updateMining();
+      this.updateRepair();
+    }
+    // Holding a repair kit over a damaged building mends it, using up kits as it goes.
+    updateRepair() {
+      const p = this.player, e = p.input.repair && this.ents.get(p.input.repair);
+      if (!e) return;
+      const pr = D.protos[e.p];
+      if (e.hp >= pr.hp || FG.dist2(p.x, p.y, e.x + e.w / 2, e.y + e.h / 2) > 14 * 14) return;
+      if (p.repairPool <= 0 && p.inv.remove('repair_pack', 1)) {
+        p.repairPool = D.items.repair_pack.repair;
+        this.stats.consume('repair_pack', 1);
+        FG.emit('inventory');
+      }
+      if (p.repairPool > 0) { const k = Math.min(2, pr.hp - e.hp, p.repairPool); e.hp += k; p.repairPool -= k; }
     }
     // Mining time in ticks for the current target.
     mineTime(t) {
@@ -406,12 +475,13 @@
       if (!p.mining || p.mining.key !== t.key) p.mining = { key: t.key, prog: 0 };
       if (t.kind === 'ent' && !this.ents.get(t.id)) { p.mining = null; return; }
       if (t.kind === 'car' && !FG.trains.findCar(this, t.id)) { p.mining = null; return; }
-      if (t.kind === 'rail' && t.pc.dead) { p.mining = null; return; }
+      const pc = t.kind === 'rail' ? this.rail.pieces.get(t.pid) : null;
+      if (t.kind === 'rail' && (!pc || pc.dead)) { p.mining = null; return; }
       p.mining.prog += 1 / this.mineTime(t);
       if (p.mining.prog < 1) return;
       p.mining.prog = 0;
       if (t.kind === 'car') this.pickUpCar(FG.trains.findCar(this, t.id));
-      else if (t.kind === 'rail') this.pickUpRail(t.pc);
+      else if (t.kind === 'rail') this.pickUpRail(pc);
       else if (t.kind === 'ent') this.pickUpEntity(this.ents.get(t.id));
       else this.mineTile(t.x, t.y);
     }
@@ -639,6 +709,7 @@
 
     // -------------------------------------------------------------------- tick
     step() {
+      this.player = this.local;
       if (this.dirty.belts) { FG.belts.recompute(this); this.dirty.belts = false; }
       if (this.dirty.fluid) { FG.fluidsys.recompute(this); this.dirty.fluid = false; }
       if (this.dirty.power) { FG.power.recompute(this); this.dirty.power = false; }
@@ -648,9 +719,14 @@
       FG.trains.update(this);
       this.enemies.update();
       FG.power.update(this);
-      this.updatePlayer();
-      this.updateCrafting();
-      this.updateDrones();
+      // Each player's turn, in the same order on every computer.
+      for (const p of this.players) {
+        this.player = p;
+        this.updatePlayer();
+        this.updateCrafting();
+        this.updateDrones();
+      }
+      this.player = this.local;
       for (let i = this.effects.length - 1; i >= 0; i--) {
         const f = this.effects[i];
         if (++f.t >= f.life) this.effects.splice(i, 1);

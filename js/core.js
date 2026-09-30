@@ -48,6 +48,18 @@ var FG = (globalThis.FG = globalThis.FG || {});
     };
   };
 
+  // Seeded PRNG whose state can be saved: every random choice the simulation makes comes from
+  // the game's own generator, so every player's copy of a multiplayer world rolls the same.
+  FG.Rand = class {
+    constructor(seed) { this.s = seed >>> 0; }
+    next() {
+      const t0 = (this.s = (this.s + 0x6d2b79f5) >>> 0);
+      let t = Math.imul(t0 ^ (t0 >>> 15), t0 | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    }
+  };
+
   FG.hash2 = function (x, y, seed) {
     let h = (x * 374761393 + y * 668265263 + seed * 144269504) | 0;
     h = Math.imul(h ^ (h >>> 13), 1274126177);

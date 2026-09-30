@@ -342,7 +342,11 @@
     const R = g.rail;
     R.trains.splice(R.trains.indexOf(tr), 1);
     tr.dead = true;
-    if (g.player.vehicle === tr.id) T.exit(g);
+    exitAll(g, tr);
+  }
+  // Everyone riding a train that is gone gets out.
+  function exitAll(g, tr) {
+    for (const p of g.players) if (p.vehicle === tr.id) g.withPlayer(p, () => T.exit(g));
   }
 
   // Remove car at index i: shrinks or splits the train.
@@ -702,7 +706,7 @@
       if (tr.segs[bad].s0 < tr.headS - 1e-6) {
         R.trains.splice(R.trains.indexOf(tr), 1);
         tr.dead = true;
-        if (g.player.vehicle === tr.id) T.exit(g);
+        exitAll(g, tr);
         g.msg('A train derailed when its track was removed', 'bad');
         continue;
       }
@@ -744,21 +748,21 @@
 
   // Cars hit the player and creatures in their way.
   function collisions(g) {
-    const p = g.player;
     const reach = CAR_W / 2 + 0.3;
     for (const tr of g.rail.trains) {
       if (tr.speed < 0.02) continue;
       for (let i = 0; i < tr.cars.length; i++) {
         const pose = T.carPose(tr, i);
-        if (!p.dead && p.vehicle !== tr.id && Math.abs(p.x - pose.x) < 5 && Math.abs(p.y - pose.y) < 5 && segDist(p.x, p.y, pose) < reach && g.tick - (p.trainHit || -99) > 30) {
+        for (const p of g.players) {
+          if (p.dead || p.vehicle === tr.id || Math.abs(p.x - pose.x) >= 5 || Math.abs(p.y - pose.y) >= 5 || segDist(p.x, p.y, pose) >= reach || g.tick - (p.trainHit || -99) <= 30) continue;
           p.trainHit = g.tick;
           p.hp -= 300 * tr.speed;
           p.lastHit = g.tick;
           const nx = -Math.sin(pose.angle), ny = Math.cos(pose.angle);
           const side = (p.x - pose.x) * nx + (p.y - pose.y) * ny >= 0 ? 1 : -1;
           p.x += nx * side * 1.6; p.y += ny * side * 1.6;
-          g.msg('Hit by a train!', 'bad');
-          if (p.hp <= 0) g.enemies.playerDied();
+          g.withPlayer(p, () => g.msg('Hit by a train!', 'bad'));
+          if (p.hp <= 0) g.enemies.playerDied(p);
         }
         for (const u of g.enemies.units) if (Math.abs(u.x - pose.x) < 4.5 && Math.abs(u.y - pose.y) < 4.5 && segDist(u.x, u.y, pose) < reach + 0.1) u.hp = 0;
       }

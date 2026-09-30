@@ -32,6 +32,22 @@
     return o;
   }
 
+  // A player as plain data (their inventory as slots).
+  function playerToJSON(p) {
+    const o = {};
+    for (const k in p) if (k !== 'inv') o[k] = p[k];
+    o.inv = p.inv.slots;
+    return o;
+  }
+  function playerFromJSON(g, o) {
+    const p = g.newPlayer(o.id || 'p1', o.name, o.color);
+    for (const k in o) if (k !== 'inv') p[k] = o[k];
+    p.inv = FG.Inventory.from(o.inv || []);
+    p.input = Object.assign(FG.newInput(), o.input || {});
+    p.isPlayer = true;
+    return p;
+  }
+
   save.serialize = function (g) {
     const w = g.world;
     const tiles = [];
@@ -50,9 +66,13 @@
       ghosts: Array.from(g.ghosts.values()),
       research: g.research,
       player: {
-        x: g.player.x, y: g.player.y, hp: g.player.hp, inv: g.player.inv.slots, queue: g.player.queue,
-        craftProg: g.player.craftProg, rounds: g.player.rounds, ammoDmg: g.player.ammoDmg, hotbar: g.hotbar || null, vehicle: g.player.vehicle || null,
+        x: g.local.x, y: g.local.y, hp: g.local.hp, inv: g.local.inv.slots, queue: g.local.queue,
+        craftProg: g.local.craftProg, rounds: g.local.rounds, ammoDmg: g.local.ammoDmg, hotbar: g.hotbar || null, vehicle: g.local.vehicle || null,
       },
+      players: g.players.map(playerToJSON),
+      offline: g.offline.map(playerToJSON),
+      localId: g.local.id,
+      rng: g.rng.s,
       stats: { total: g.stats.total, sec: g.stats.sec, ten: g.stats.ten, min: g.stats.min, kills: g.stats.kills, pollution: g.stats.pollution, nestsKilled: g.stats.nestsKilled || 0 },
       enemies: {
         evo: en.evo, expandAt: en.expandAt, lastPoll: en.lastPoll,
@@ -118,10 +138,21 @@
     g.research.queue = (r.queue || []).filter((x) => D.techs[x]);
     g.research.current = r.current && D.techs[r.current] ? r.current : null;
 
+    // Inventory size bonuses were restored with each player's inventory; remember them for
+    // players who join later.
+    for (const tid in g.research.done) for (const ef of D.techs[tid].effects) if (ef.type === 'inv') g.bonus.inv += ef.v;
     const p = data.player;
-    Object.assign(g.player, { x: p.x, y: p.y, hp: p.hp, craftProg: p.craftProg || 0, rounds: p.rounds || 0, ammoDmg: p.ammoDmg || 5 });
-    g.player.inv = FG.Inventory.from(p.inv);
-    g.player.queue = (p.queue || []).filter((q) => D.recipes[q.rid]);
+    if (data.players && data.players.length) {
+      g.players = data.players.map((o) => playerFromJSON(g, o));
+      g.offline = (data.offline || []).map((o) => playerFromJSON(g, o));
+      g.local = g.player = g.players.find((q) => q.id === data.localId) || g.players[0];
+      for (const q of g.players.concat(g.offline)) q.queue = (q.queue || []).filter((c) => D.recipes[c.rid]);
+    } else {
+      Object.assign(g.player, { x: p.x, y: p.y, hp: p.hp, craftProg: p.craftProg || 0, rounds: p.rounds || 0, ammoDmg: p.ammoDmg || 5 });
+      g.player.inv = FG.Inventory.from(p.inv);
+      g.player.queue = (p.queue || []).filter((q) => D.recipes[q.rid]);
+    }
+    if (data.rng !== undefined) g.rng.s = data.rng >>> 0;
     g.hotbar = p.hotbar || null;
 
     const s = data.stats;
@@ -142,7 +173,7 @@
       u.hp = hp;
     }
     FG.trains.deserialize(g, data.trains);
-    g.player.vehicle = data.player.vehicle || null;
+    if (!data.players) g.player.vehicle = data.player.vehicle || null;
     g.objectives.idx = data.objectives || 0;
     g.launches = data.launches || 0;
     g.won = !!data.won;

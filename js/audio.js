@@ -88,7 +88,7 @@
     let v = 1;
     const app = FG.app;
     if (x !== undefined && app && app.game) {
-      const p = app.game.player;
+      const p = app.game.local || app.game.player;
       const d = Math.hypot(x - p.x, y - p.y);
       if (d > 40) return;
       v = Math.max(0.08, 1 - d / 40);
