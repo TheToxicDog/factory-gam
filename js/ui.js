@@ -510,6 +510,19 @@
       el.hidden = !(on && this.app.game && !this.app.titleShown);
     }
 
+    // A quiet "Saved" note at the bottom right after each autosave.
+    savedNote(r) {
+      const el = this.$('hud-saved');
+      if (!el || !r) return;
+      el.textContent = r.account ? 'Autosaved · in your account too' : 'Autosaved';
+      el.hidden = false;
+      el.classList.remove('fade');
+      void el.offsetWidth;
+      el.classList.add('fade');
+      clearTimeout(this.savedTimer);
+      this.savedTimer = setTimeout(() => { el.hidden = true; }, 3000);
+    }
+
     // ------------------------------------------------------ toasts/alerts
     toast(text, kind) {
       if (kind === 'warn' && FG.sfx) FG.sfx.play('warn');
@@ -1414,6 +1427,7 @@
         b('Save game', () => this.open('saves', 'save')),
         b('Load game', () => this.open('saves', 'load')),
         b('Copy or import a save code', () => this.open('savecode')),
+        FG.cloud.state === 'none' ? null : b(FG.cloud.state === 'on' ? 'Account saves: on' : 'Account saves: off', () => this.open('account')),
         b(app.net ? (app.net.role === 'host' ? 'Multiplayer: hosting' : 'Multiplayer: joined') : 'Multiplayer', () => this.open('multiplayer')),
         b('Controls and tips', () => this.open('help')),
         b(FG.sfx.enabled() ? 'Sound: on' : 'Sound: off', (ev) => { FG.sfx.setEnabled(!FG.sfx.enabled()); ev.target.textContent = FG.sfx.enabled() ? 'Sound: on' : 'Sound: off'; }),
@@ -1426,26 +1440,129 @@
       const app = this.app;
       const w = this.frame('saves', mode === 'save' ? 'Save game' : 'Load game');
       const list = h('div', { class: 'slots-list' });
-      const render = () => {
+      const cloudOn = FG.cloud.state === 'on';
+      let closed = false, seq = 0;
+      w.onClose = () => { closed = true; };
+      const draw = (rows, checking) => {
         list.innerHTML = '';
-        for (const m of FG.save.list()) {
-          if (mode === 'save' && m.slot === 'auto') continue;
-          const label = m.slot === 'auto' ? 'Autosave' : 'Slot ' + m.slot;
-          const meta = m.empty ? 'Empty' : new Date(m.when).toLocaleString() + ' · played ' + FG.fmtTime(m.tick) + ' · ' + Math.round(m.size / 1024) + ' KB';
-          const row = h('div', { class: 'srow' }, h('div', { class: 'meta' }, h('b', { text: label }), h('div', { text: meta })));
-          if (mode === 'save') row.appendChild(h('button', { class: 'btn small primary', text: m.empty ? 'Save here' : 'Overwrite', onclick: async () => {
-            try { await FG.save.store(app.game, m.slot); this.toast('Saved to ' + label.toLowerCase(), 'good'); render(); } catch (e) { this.toast(e.message, 'bad'); }
+        for (const r of rows) {
+          if (mode === 'save' && r.slot === 'auto') continue;
+          const label = r.slot === 'auto' ? 'Autosave' : 'Slot ' + r.slot;
+          const m = r.best;
+          const meta = r.empty ? (checking ? 'Checking your account…' : 'Empty') : new Date(m.when).toLocaleString() + ' · played ' + FG.fmtTime(m.tick) + ' · ' + Math.round(m.size / 1024) + ' KB';
+          const where = r.empty ? '' : r.local && r.account ? (r.same ? 'In this browser and your account' : r.from === 'account' ? 'Newer copy in your account (an older one in this browser)' : 'Newer copy in this browser (an older one in your account)') : r.account ? 'In your account' : cloudOn && !checking ? 'In this browser only' : '';
+          const row = h('div', { class: 'srow', 'data-slot': r.slot }, h('div', { class: 'meta' }, h('b', { text: label }), h('div', { text: meta }), where ? h('div', { class: 'where', text: where }) : null));
+          if (mode === 'save') row.appendChild(h('button', { class: 'btn small primary', text: r.empty ? 'Save here' : 'Overwrite', onclick: async (ev) => {
+            const btn = ev.currentTarget;
+            btn.disabled = true;
+            try {
+              const out = await FG.saves.store(app.game, r.slot);
+              const to = out.local && out.account ? ' (this browser and your account)' : out.account ? ' (your account; this browser is full)' : '';
+              this.toast('Saved to ' + label.toLowerCase() + to, 'good');
+              if (out.errors.length) this.toast(out.errors[0], 'warn');
+              render();
+            } catch (e) { this.toast(e.message, 'bad'); btn.disabled = false; }
           } }));
-          else if (!m.empty) row.appendChild(h('button', { class: 'btn small primary', text: 'Load', onclick: async () => {
-            try { const g = await FG.save.loadSlot(m.slot); app.startGame(g); this.toast('Loaded ' + label.toLowerCase(), 'good'); } catch (e) { this.toast('Could not load: ' + e.message, 'bad'); }
+          else if (!r.empty) row.appendChild(h('button', { class: 'btn small primary', text: 'Load', onclick: async (ev) => {
+            ev.currentTarget.disabled = true;
+            try { const g = await FG.saves.load(r.slot); app.startGame(g); this.toast('Loaded ' + label.toLowerCase(), 'good'); } catch (e) { this.toast('Could not load: ' + e.message, 'bad'); render(); }
           } }));
-          if (!m.empty && m.slot !== 'auto') row.appendChild(h('button', { class: 'btn small danger', text: 'Delete', onclick: () => { FG.save.deleteSlot(m.slot); render(); } }));
+          if (!r.empty && r.slot !== 'auto') row.appendChild(h('button', { class: 'btn small danger', text: 'Delete', title: r.account ? 'Delete from this browser and your account' : 'Delete from this browser', onclick: async () => { await FG.saves.remove(r.slot); render(); } }));
           list.appendChild(row);
         }
       };
+      const render = () => {
+        const my = ++seq;
+        FG.saves.list().then((rows) => { if (!closed && my === seq) draw(rows, false); }, () => {});
+      };
+      // This browser's saves at once; the account's when they arrive.
+      draw(FG.save.list().map((m) => ({ slot: m.slot, empty: !!m.empty, best: m.empty ? null : m, local: m.empty ? null : m, account: null, from: 'browser' })), cloudOn);
       render();
-      w.body.append(list, h('div', { class: 'hint', style: 'margin-top:10px', text: 'Saves live in this browser only. To move a game elsewhere, use a save code.' }),
-        h('div', { class: 'actions' }, h('button', { class: 'btn', text: 'Back', onclick: () => (app.game && !app.titleShown ? this.open('menu') : this.close()) })));
+      const c = FG.cloud.state;
+      const hint = cloudOn ? 'Saves go to this browser and your claude.ai account; loading picks the newest copy. Autosaves happen every two minutes and when you leave.'
+        : 'Saves live in this browser' + (c === 'none' ? '' : ' (you can also keep them in your claude.ai account)') + '. Autosaves happen every two minutes and when you leave. To move a game elsewhere, use a save code.';
+      w.body.append(list, h('div', { class: 'hint', style: 'margin-top:10px;max-width:520px', text: hint }),
+        h('div', { class: 'actions' },
+          c === 'none' ? null : h('button', { class: 'btn', id: 'saves-account', text: cloudOn ? 'Account saves: on' : 'Account saves…', onclick: () => this.open('account') }),
+          h('button', { class: 'btn', text: 'Back', onclick: () => (app.game && !app.titleShown ? this.open('menu') : this.close()) })));
+      return w;
+    }
+
+    // Optional saves in the player's claude.ai account (cloud.js).
+    build_account() {
+      const app = this.app, C = FG.cloud;
+      const w = this.frame('account', 'Account saves');
+      const pane = h('div', { class: 'pane account-pane' });
+      const p = (text, cls) => h('p', { class: cls || 'hint', text });
+      const btn = (text, fn, cls, id) => h('button', { class: 'btn ' + (cls || ''), id, text, onclick: fn });
+      const inGame = app.game && !app.titleShown && !(app.net && app.net.role === 'client');
+      const ago = (t) => { const s = Math.round((Date.now() - t) / 1000); return s < 60 ? 'just now' : s < 3600 ? Math.round(s / 60) + ' min ago' : new Date(t).toLocaleString(); };
+      let closed = false;
+      w.onClose = () => { closed = true; };
+      const status = h('div', { class: 'acct-status' });
+      const setStatus = (dot, text) => { status.innerHTML = ''; status.append(h('i', { class: 'acct-dot ' + dot }), h('b', { text })); };
+      const actions = h('div', { class: 'actions', style: 'justify-content:flex-start;margin-top:4px' });
+      const st = C.state;
+      if (st === 'on') {
+        setStatus('on', 'On' + (C.name ? ' · ' + C.name : ''));
+        pane.append(status, p('Every save and autosave also goes to your claude.ai account, so Continue picks up where you left off on any computer where you open this game. Only you can see these saves.'));
+        pane.append(p(C.busy ? 'Saving to your account…' : C.lastSaved ? 'Last saved to your account ' + ago(C.lastSaved) + '.' : 'Nothing saved to your account from this visit yet.', 'hint acct-last'));
+        if (C.lastError) pane.append(p(C.lastError, 'hint warn'));
+        if (inGame) actions.append(btn('Save now', async (ev) => {
+          ev.currentTarget.disabled = true;
+          try { const out = await FG.saves.store(app.game, 'auto'); if (out.account) this.toast('Saved to your account', 'good'); else this.toast(out.errors[0] || 'Could not save to your account', 'warn'); }
+          catch (e) { this.toast(e.message, 'bad'); }
+          if (!closed) this.open('account');
+        }, 'primary', 'acct-save-now'));
+        actions.append(btn('Turn off', () => { C.turnOff(); this.toast('Account saves are off. Saves already in your account stay there.', 'good'); }, '', 'acct-off'));
+        pane.append(actions);
+        // What the account holds.
+        const list = h('div', { class: 'slots-list', id: 'acct-slots' }, p('Checking your account…'));
+        pane.append(h('h3', { text: 'In your account' }), list);
+        C.list().then((rows) => {
+          if (closed) return;
+          list.innerHTML = '';
+          for (const r of rows) {
+            const label = r.slot === 'auto' ? 'Autosave' : 'Slot ' + r.slot;
+            const row = h('div', { class: 'srow' }, h('div', { class: 'meta' }, h('b', { text: label }),
+              h('div', { text: r.empty ? 'Empty' : new Date(r.when).toLocaleString() + ' · played ' + FG.fmtTime(r.tick) + ' · ' + Math.round(r.size / 1024) + ' KB' })));
+            if (!r.empty) row.append(btn('Load', async (ev) => {
+              ev.currentTarget.disabled = true;
+              try { app.startGame(await FG.saves.load(r.slot, 'account')); this.toast('Loaded ' + label.toLowerCase() + ' from your account', 'good'); }
+              catch (e) { this.toast('Could not load: ' + e.message, 'bad'); }
+            }, 'small primary'));
+            if (!r.empty && r.slot !== 'auto') row.append(btn('Delete', async () => { await C.remove(r.slot).catch((e) => this.toast(e.message, 'bad')); if (!closed) this.open('account'); }, 'small danger'));
+            list.appendChild(row);
+          }
+        });
+      } else if (st === 'off' || st === 'error') {
+        setStatus('off', st === 'error' ? 'Something went wrong' : 'Off');
+        pane.append(status, p('Optional: keep your saves in your claude.ai account as well as this browser. Autosaves go there too, so Continue picks up where you left off on any computer where you open this game. Only you can see them.'));
+        if (st === 'error' && C.lastError) pane.append(p(C.lastError, 'hint warn'));
+        actions.append(btn(st === 'off' ? 'Turn on account saves' : 'Try again', () => { C.turnOn().then((s2) => { if (s2 === 'on') { this.toast('Account saves are on', 'good'); if (inGame) FG.saves.autosave(app.game, { minGap: 0 }).then(() => { if (!closed && this.isOpen('account')) this.open('account'); }); } }); }, 'primary', 'acct-on'));
+        pane.append(actions, p('Turning it on asks claude.ai for permission once. Nothing changes if you leave it off: games save in this browser, and save codes move them anywhere.'));
+      } else if (st === 'denied') {
+        setStatus('off', 'Off · permission not given');
+        pane.append(status, p('Account saves need permission to keep data in your claude.ai account, and it was not given. Games still save in this browser, and save codes move them anywhere. To change your mind, allow it in this game\'s permissions on claude.ai and reload the page.'));
+      } else if (st === 'asking') {
+        setStatus('wait', 'Waiting for permission');
+        pane.append(status, p('Answer the claude.ai permission dialog to continue.'));
+      } else if (st === 'readonly') {
+        setStatus('off', 'Not available with view-only access');
+        pane.append(status, p('Your access to this game is view-only, and view-only access can\'t keep data in an account. Ask the person who shared it for Contributor access, or keep using browser saves and save codes.'));
+      } else if (st === 'unavailable') {
+        setStatus('off', 'Not available here');
+        pane.append(status, p('Account saves need you signed in to claude.ai, with this game shared with you or your team (a public link can\'t keep account data). Your games still save in this browser, and save codes work everywhere.'));
+      } else if (st === 'unknown') {
+        setStatus('wait', 'Checking…');
+        pane.append(status);
+      } else {
+        setStatus('off', 'Not available here');
+        pane.append(status, p('This copy of the game isn\'t running on claude.ai, so there is no account to save to. Games save in this browser, and save codes move them anywhere.'));
+      }
+      w.body.append(pane, h('div', { class: 'actions' },
+        btn('Saved games', () => this.open('saves', inGame ? 'save' : 'load')),
+        btn('Back', () => (app.game && !app.titleShown ? this.open('menu') : this.close()))));
       return w;
     }
 

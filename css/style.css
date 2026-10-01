@@ -447,3 +447,27 @@ canvas:focus { outline: none; }
   background: rgba(20, 18, 15, 0.95); border: 1px solid var(--amber); color: var(--text);
   padding: 7px 10px; font: 15px var(--font-ui); border-radius: 2px; user-select: text;
 }
+
+/* ------------------------------------------------------- account saves */
+#hud-saved {
+  font-size: 12.5px; color: var(--muted); pointer-events: none;
+  padding: 3px 8px; background: rgba(20, 18, 15, 0.75); border: 1px solid var(--line); border-radius: 2px;
+}
+#hud-saved::before { content: "✓ "; color: var(--good); font-weight: 700; }
+#hud-saved.fade { animation: saved-note 3s ease-out forwards; }
+@keyframes saved-note { 0% { opacity: 0; } 8% { opacity: 1; } 75% { opacity: 1; } 100% { opacity: 0; } }
+.title-account { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; margin-top: -8px; }
+.title-account .btn { font-size: 13.5px; }
+.title-account .btn::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--dim); margin-right: 7px; flex: none; }
+.title-account .btn.on::before { background: var(--good); }
+.title-account .hint { font-size: 12.5px; }
+.account-pane { max-width: 520px; display: flex; flex-direction: column; gap: 6px; }
+.account-pane p { margin: 0; }
+.account-pane h3 { margin-top: 10px; }
+.account-pane .slots-list { min-width: 0; }
+.acct-status { display: flex; align-items: center; gap: 8px; font-size: 16px; }
+.acct-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--dim); flex: none; }
+.acct-dot.on { background: var(--good); }
+.acct-dot.wait { background: var(--warn); }
+.hint.warn { color: var(--warn); }
+.slots-list .srow .meta .where { font-size: 12.5px; color: var(--dim); }

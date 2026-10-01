@@ -13,6 +13,8 @@
   mp.name = function () {
     let n = null;
     try { n = localStorage.getItem('cogworks-name'); } catch (e) { /* storage blocked */ }
+    // With account saves on, the account's display name is a good first guess.
+    if (!n && FG.cloud && FG.cloud.name) n = FG.net.cleanName(FG.cloud.name);
     return n || 'Engineer ' + (10 + ((Math.random() * 90) | 0));
   };
   mp.setName = function (n) {
@@ -194,8 +196,15 @@
       } else {
         const src = h('select', { id: 'mp-src', 'aria-label': 'World to host' },
           h('option', { value: 'new', text: 'A new world' }), h('option', { value: 'demo', text: 'The Demo factory' }));
-        if (FG.save.list().some((m) => m.slot === 'auto' && !m.empty)) src.appendChild(h('option', { value: 'auto', text: 'Your autosave' }));
-        for (const m of FG.save.list()) if (m.slot !== 'auto' && !m.empty) src.appendChild(h('option', { value: m.slot, text: 'Save slot ' + m.slot }));
+        // Saved worlds, from this browser at once and from the account when it answers.
+        const addSaves = (rows) => {
+          for (const r of rows) {
+            if (r.empty || src.querySelector('option[value="' + r.slot + '"]')) continue;
+            src.appendChild(h('option', { value: r.slot, text: r.slot === 'auto' ? 'Your autosave' : 'Save slot ' + r.slot }));
+          }
+        };
+        addSaves(FG.save.list());
+        if (FG.cloud.state === 'on') FG.saves.list().then(addSaves, () => {});
         const enemies = h('select', { id: 'mp-enemies', 'aria-label': 'Enemies' }, h('option', { value: 'normal', text: 'Enemies: normal' }), h('option', { value: 'peaceful', text: 'Enemies: peaceful' }), h('option', { value: 'off', text: 'Enemies: none' }));
         src.addEventListener('change', () => { enemies.hidden = src.value !== 'new'; });
         hostPane.append(h('div', { class: 'rowx', style: 'display:flex;gap:8px;flex-wrap:wrap;align-items:center' }, src, enemies),
@@ -204,7 +213,7 @@
             try {
               if (src.value === 'new') g = new FG.Game({ enemies: enemies.value, size: 512 });
               else if (src.value === 'demo') g = FG.demoFactory();
-              else g = await FG.save.loadSlot(src.value);
+              else g = await FG.saves.load(src.value);
             } catch (e) { ui.toast('Could not load that world: ' + e.message, 'bad'); return; }
             ui.close();
             mp.host(g);

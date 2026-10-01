@@ -3,10 +3,12 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-const SIM_FILES = ['core', 'data', 'world', 'entities', 'belts', 'fluids', 'power', 'machines', 'combat', 'objectives', 'rails', 'trains', 'sim', 'save', 'commands', 'net', 'demo'];
+const SIM_FILES = ['core', 'data', 'world', 'entities', 'belts', 'fluids', 'power', 'machines', 'combat', 'objectives', 'rails', 'trains', 'sim', 'save', 'cloud', 'commands', 'net', 'demo'];
 
-function load() {
+// extra: more globals for the scripts to see (a fake localStorage, say).
+function load(extra) {
   const ctx = { Buffer, console, Math, Date, JSON, Object, Array, Map, Set, Float32Array, Int32Array, Uint8Array, Uint32Array, Uint16Array, Number, String, Error, performance, setTimeout, clearTimeout, queueMicrotask };
+  Object.assign(ctx, extra || {});
   ctx.globalThis = ctx;
   vm.createContext(ctx);
   for (const f of SIM_FILES) {

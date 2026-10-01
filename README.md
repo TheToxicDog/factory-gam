@@ -20,6 +20,13 @@ A keyboard and mouse are required.
 - **Without the room** (the page opened from a file, or by a public link): the joiner makes a join code, the host turns it into an answer code, and the joiner pastes that back.
 - **Playing together:** everyone plays the same world at once, each with their own inventory, crafting and name tag. Up to 8 players; press ` to chat. The host's saves keep everyone's things for when they come back. If the host leaves, the others keep playing their own copy.
 
+**Account saves (optional):** on claude.ai, *Save to your claude.ai account* under the title menu (or *Account saves* in the Esc menu) keeps your saves in your account as well as this browser.
+
+- It asks claude.ai for permission once. Nothing requires it: without it, games save in this browser and save codes still move them anywhere.
+- With it on, every save and autosave also goes to the account, and *Continue* picks the newest autosave from either place, so you can carry on from another computer.
+- The saves sit in your private corner of the artifact's storage (`data/users/<your id>/`). Nobody else can read them, not even the artifact's owner.
+- It needs you signed in, with the game shared with you at Contributor level or above. View-only access and public links keep browser saves and codes.
+
 **Demo factory:** the title screen's *Demo factory* button starts a ready-made mid-game base on seed 2024, built on the map's real terrain. It has:
 
 - steam power by the lake;
@@ -86,7 +93,7 @@ Guided objectives in the top-left walk you through the arc.
 - **Railways** follow Factorio's rail grid. Track runs between rail points on a 2-tile grid in eight directions: straight pieces, diagonal pieces, and curved pieces that bend 45° as a wide arc (radius about 9.7 tiles) and cost 4 rails. Two curves make a smooth 90° turn over 12×12 tiles. Drag with rails in hand and the planner (A* over rail states) lays straights, diagonals and curves to reach the point under the mouse, joining existing track and avoiding buildings. Track beyond your reach, or beyond the rails you carry, is left planned; click it to build it, or let drones do it.
 - **Trains** are locomotives and cargo wagons riding the track. They only drive the way a locomotive faces, so a line with a stop at each end needs a locomotive at each end (or a loop). A stop serves trains passing with the stop on their right. Schedules wait for a time, full or empty cargo, or inactivity. Arms load and unload stopped wagons. Rail signals split track into blocks that hold one train each; a track signalled on one side only is one-way; chain signals keep trains out of a junction until they can get through it. You can ride and drive a train yourself.
 - **Blueprints** copy, cut and paste areas, including track (kept on the rail grid). After you research Construction drones, ghosts build themselves from your inventory while you are nearby.
-- **Saves** go to browser storage as gzip. There are three slots plus an autosave every 3 minutes (and whenever you quit or start another game). You can also export or import a save code to move a game between browsers.
+- **Saves** go to browser storage as gzip. There are three slots plus an autosave every 2 minutes (and whenever you quit, start another game or leave the tab). You can also export or import a save code to move a game between browsers. With account saves on, each save is also written to the account: the save text is split into parts of up to 200,000 characters (a document holds 256 KiB), each save writes a new set of parts before switching the slot's index to them, and a checksum is verified on load.
 
 ## Project layout
 
@@ -107,6 +114,7 @@ js/rails.js       rail geometry (2-tile grid, curves), track network, planner, s
 js/trains.js      trains: cars, reservations, signals, pathfinding, schedules, driving
 js/sim.js         game state, research, hand crafting, player, drones, fixed-rate tick
 js/save.js        save / load / save codes
+js/cloud.js       optional saves in the claude.ai account, and slots combining them with browser saves
 js/commands.js    every player action as a command (run at once alone, in lockstep in multiplayer)
 js/net.js         multiplayer sessions: host and client lockstep, snapshots, desync repair
 js/demo.js        the Demo factory scenario
@@ -135,6 +143,7 @@ Multiplayer works like Factorio's lockstep:
 ```
 node tests/sim.test.js   # data integrity + simulation behaviour (belts, power, oil, combat, railways, saves…)
 node tests/net.test.js   # multiplayer lockstep: joins, leaves, commands, desync repair, a minute of the Demo factory
+node tests/cloud.test.js # account saves against a stand-in store: parts, interrupted saves, privacy, permissions
 node tests/perf.js       # ~14,000-entity factory: ms per tick and topology rebuild cost
 ```
 
@@ -143,6 +152,8 @@ The browser scripts (`tests/smoke.cjs`, `tests/play.cjs`, `tests/trains.cjs`, `t
 - one joins over WebRTC;
 - one without WebRTC joins through the relay;
 - they walk, build and chat, and their worlds are compared tick for tick.
+
+`tests/account.cjs` turns account saves on, autosaves, and continues on a second computer, with a stand-in for claude.ai's store (`tests/fake-db.js`, `tests/fake-account.js`). It also covers a signed-out visit and view-only access.
 
 `tests/mpcodes.cjs` joins with codes and no room. `tests/mplobby.cjs` joins through a room that refuses separate game rooms. They mine, build, fuel, drag belts, configure assemblers, save and load, and take screenshots.
 

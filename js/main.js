@@ -3,7 +3,7 @@
   'use strict';
   const D = FG.data;
   const STEP = 1000 / FG.TICKS;
-  const AUTOSAVE_TICKS = 3 * 60 * 60;
+  const AUTOSAVE_TICKS = 2 * 60 * 60;
 
   const app = (FG.app = {
     game: null,
@@ -42,7 +42,7 @@
   app.onWindowChange = function () {
     const w = app.ui.win;
     // A multiplayer world never pauses.
-    app.paused = !app.net && !!(w && (w.name === 'menu' || w.name === 'saves' || w.name === 'savecode' || w.name === 'newgame' || w.name === 'help' || w.name === 'victory'));
+    app.paused = !app.net && !!(w && (w.name === 'menu' || w.name === 'saves' || w.name === 'savecode' || w.name === 'account' || w.name === 'newgame' || w.name === 'help' || w.name === 'victory'));
   };
 
   // Keep the hotbar stocked with placeable items the player picks up.
@@ -88,13 +88,23 @@
     app.ui.setKeyboardHint(!document.hasFocus());
   };
 
-  // Keep the running game safe before replacing it.
+  // Keep the running game safe before replacing it (in the account too, when that's on).
   function autosaveCurrent() {
     // A guest's copy of someone else's world is not their autosave.
     if (app.net && app.net.role === 'client') return null;
-    if (app.game && !app.titleShown && app.game.tick > 60) return FG.save.store(app.game, 'auto').catch(() => {});
+    if (app.game && !app.titleShown && app.game.tick > 60) return autosave(app.game, { minGap: 0 });
     return null;
   }
+  function autosave(g, opts) {
+    return FG.saves.autosave(g, opts).then((r) => {
+      if (app.game === g && !app.titleShown) app.ui.savedNote(r);
+      return r;
+    }, (e) => {
+      if (app.game === g && !app.titleShown) app.ui.toast('Autosave failed: ' + e.message, 'warn');
+      return null;
+    });
+  }
+  app.autosave = autosave;
 
   app.newGame = function (opts) {
     autosaveCurrent();
@@ -126,22 +136,63 @@
     }
   };
 
+  // The title menu draws at once from this browser's saves, then again when the account's
+  // saves are known (Continue picks whichever autosave is newer).
+  let titleRows = null, titleSeq = 0;
   function buildTitleMenu() {
+    const seq = ++titleSeq;
+    titleRows = null;
+    drawTitleMenu();
+    FG.saves.list().then((rows) => { if (seq === titleSeq && app.titleShown) { titleRows = rows; drawTitleMenu(); } }, () => {});
+  }
+  app.buildTitleMenu = buildTitleMenu;
+  function drawTitleMenu() {
     const menu = document.getElementById('title-menu');
     menu.innerHTML = '';
     const h = FG.h;
-    const hasAuto = FG.save.list().find((m) => m.slot === 'auto' && !m.empty);
-    const hasAny = FG.save.list().some((m) => !m.empty);
-    if (hasAuto) menu.appendChild(h('button', { class: 'btn primary', text: 'Continue', onclick: async () => {
-      try { app.startGame(await FG.save.loadSlot('auto')); } catch (e) { app.ui.toast('Could not load the autosave: ' + e.message, 'bad'); }
-    } }));
+    const rows = titleRows || FG.save.list().map((m) => ({ slot: m.slot, empty: !!m.empty, best: m.empty ? null : m, from: 'browser' }));
+    const auto = rows.find((r) => r.slot === 'auto' && !r.empty);
+    const hasAny = rows.some((r) => !r.empty);
+    const hasAuto = !!auto;
+    if (auto) {
+      const btn = h('button', { class: 'btn primary', id: 'title-continue', text: 'Continue', title: 'Autosave from ' + new Date(auto.best.when).toLocaleString() + (auto.from === 'account' ? ', in your account' : ''), onclick: async () => {
+        btn.disabled = true;
+        try { app.startGame(await FG.saves.load('auto')); } catch (e) { app.ui.toast('Could not load the autosave: ' + e.message, 'bad'); }
+        btn.disabled = false;
+      } });
+      menu.appendChild(btn);
+    }
     menu.appendChild(h('button', { class: 'btn' + (hasAuto ? '' : ' primary'), text: 'New game', onclick: () => app.ui.open('newgame') }));
     menu.appendChild(h('button', { class: 'btn', id: 'title-multiplayer', text: 'Multiplayer', title: 'Host a world or join one with friends who have this page open', onclick: () => app.ui.open('multiplayer') }));
     menu.appendChild(h('button', { class: 'btn', text: 'Demo factory', title: 'A ready-made base with steam power, miners, belts, smelting, science and a railway', onclick: () => app.startDemo() }));
     if (hasAny) menu.appendChild(h('button', { class: 'btn', text: 'Load game', onclick: () => app.ui.open('saves', 'load') }));
     menu.appendChild(h('button', { class: 'btn', text: 'Import save code', onclick: () => app.ui.open('savecode') }));
     menu.appendChild(h('button', { class: 'btn', text: 'Controls', onclick: () => app.ui.open('help') }));
+    drawAccountLine();
   }
+
+  // Under the title menu: whether saves also go to the claude.ai account.
+  function drawAccountLine() {
+    const el = document.getElementById('title-account');
+    if (!el) return;
+    const c = FG.cloud;
+    el.innerHTML = '';
+    el.hidden = c.state === 'none' || c.state === 'unknown';
+    if (el.hidden) return;
+    const h = FG.h;
+    const on = c.state === 'on';
+    const text = on ? 'Saving to your account' + (c.name ? ' (' + c.name + ')' : '') : c.state === 'asking' ? 'Waiting for permission…' : 'Save to your claude.ai account';
+    el.appendChild(h('button', { class: 'btn small' + (on ? ' on' : ''), id: 'title-account-btn', text: text, title: 'Optional: keep your saves in your claude.ai account so they follow you to other computers', onclick: () => app.ui.open('account') }));
+    if (!on) el.appendChild(h('span', { class: 'hint', text: 'Optional. Without it, games save in this browser.' }));
+  }
+  let seenState = FG.cloud.state, seenBusy = false;
+  FG.cloud.onChange((c) => {
+    const turned = c.state !== seenState, saved = seenBusy && !c.busy;
+    seenState = c.state; seenBusy = c.busy;
+    if (!turned && !saved) return;
+    if (app.titleShown) { if (turned && (c.state === 'on' || c.state === 'off')) buildTitleMenu(); else drawAccountLine(); }
+    if (app.ui.win && app.ui.win.name === 'account') app.ui.open('account');
+  });
 
   // A small working factory that runs behind the title screen.
   function makeDemo() {
@@ -233,7 +284,7 @@
         if (now - lastHud > 100) { lastHud = now; app.ui.updateHud(); }
         if (g.tick - app.lastAutosave > AUTOSAVE_TICKS && !(app.net && app.net.role === 'client')) {
           app.lastAutosave = g.tick;
-          FG.save.store(g, 'auto').catch(() => app.ui.toast('Autosave failed: browser storage is unavailable', 'warn'));
+          autosave(g);
         }
       }
     } catch (err) {
@@ -254,9 +305,12 @@
   FG.on('objective', () => { if (live()) FG.sfx.play('objective'); });
   FG.on('alert', () => { if (live()) FG.sfx.play('alert'); });
 
-  // Save before the tab closes (uncompressed is too slow to be safe; use the fast path).
+  // Save when the tab is hidden or closing. The browser copy is quick; the account copy
+  // goes too unless one was made in the last 15 seconds.
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden && app.game && !app.titleShown) FG.save.store(app.game, 'auto').catch(() => {});
+    if (document.hidden && app.game && !app.titleShown && app.game.tick > 60 && !(app.net && app.net.role === 'client')) {
+      FG.saves.autosave(app.game, { minGap: 15000, noWait: true }).catch(() => {});
+    }
   });
 
   function boot(data) {
@@ -270,6 +324,8 @@
     }
     if (!restored) app.showTitle();
     requestAnimationFrame(frame);
+    // Account saves light up once the platform answers (never asking anything by themselves).
+    FG.cloud.init().catch((e) => { console.warn('account saves unavailable', e); });
   }
 
   // Preserve an in-progress game across live page updates when hosted as an artifact.

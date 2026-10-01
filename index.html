@@ -24,6 +24,7 @@
     <div id="hud-right">
       <div id="minimap-wrap" class="card" title="Open map (M)"><canvas id="minimap" width="184" height="184"></canvas></div>
       <div id="hud-clock" class="card"></div>
+      <div id="hud-saved" aria-live="polite" hidden></div>
     </div>
     <div id="hud-hover" class="card" hidden></div>
     <div id="hud-queue"></div>
@@ -45,6 +46,7 @@
       <div class="stripe" aria-hidden="true"></div>
       <p class="lede">Crash-land on an untouched world. Mine by hand, then build machines that mine for you, belts that carry for you, and labs that think for you, until the whole planet is one machine aimed at orbit.</p>
       <div class="menu" id="title-menu"></div>
+      <div class="title-account" id="title-account" hidden></div>
       <p class="touch-note" id="touch-note" hidden>This game needs a keyboard and mouse.</p>
       <p class="foot">WASD to walk · right-click to mine · E for inventory · H for all controls</p>
     </div>
@@ -67,6 +69,7 @@
 <script src="js/trains.js"></script>
 <script src="js/sim.js"></script>
 <script src="js/save.js"></script>
+<script src="js/cloud.js"></script>
 <script src="js/commands.js"></script>
 <script src="js/net.js"></script>
 <script src="js/demo.js"></script>

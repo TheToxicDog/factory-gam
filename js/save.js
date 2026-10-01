@@ -203,7 +203,10 @@
   save.unpack = gunzip;
 
   save.store = async function (g, slot) {
-    const packed = await gzip(save.serialize(g));
+    return save.storeText(slot, await gzip(save.serialize(g)), g);
+  };
+  // Keep already-packed save text (so one packing can go to several places).
+  save.storeText = function (slot, packed, g) {
     const meta = { slot, when: Date.now(), tick: g.tick, seed: g.opts.seed, size: packed.length };
     try {
       localStorage.setItem(PREFIX + slot, packed);
